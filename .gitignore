@@ -73,3 +73,9 @@ yarn-error.*
 *.swp
 *.swo
 *~
+
+# Local test images (sample prescriptions).
+/test-data/
+
+# Submission assets (thumbnail, screenshots, video).
+/submission/

@@ -9,8 +9,11 @@ from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .db import Member, get_db, utcnow
 
@@ -76,6 +79,39 @@ class RateLimiter:
     def reset(self) -> None:
         with self._lock:
             self._events.clear()
+
+
+MAX_BODY_BYTES = 10 * 1024 * 1024  # a resized prescription photo is well under this
+TOO_LARGE = "That's too big to send. Try a smaller photo."
+
+
+class BodySizeLimit:
+    """Refuse request bodies over `limit` bytes before anything (even sign-in) reads them into memory."""
+
+    def __init__(self, app: ASGIApp, limit: int = MAX_BODY_BYTES) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        declared = Headers(scope=scope).get("content-length")
+        if declared is not None and (not declared.isdigit() or int(declared) > self.limit):
+            await JSONResponse({"detail": TOO_LARGE}, status_code=status.HTTP_413_CONTENT_TOO_LARGE)(scope, receive, send)
+            return
+        received = 0
+
+        async def counted_receive() -> Message:  # for bodies sent without a declared length
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.limit:
+                    raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, TOO_LARGE)
+            return message
+
+        await self.app(scope, counted_receive, send)
 
 
 def client_ip(request: Request) -> str:

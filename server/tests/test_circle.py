@@ -177,6 +177,20 @@ def test_deleting_everything_needs_permission_and_signs_everyone_out(client):
     assert (count(Note), count(Member), count(CareProfile)) == (0, 0, 0)
 
 
+def test_oversized_uploads_are_refused_before_sign_in(client):
+    huge = b"x" * (11 * 1024 * 1024)
+    declared = client.post("/api/prescriptions/read", content=huge, headers={"Content-Type": "application/json"})
+    assert declared.status_code == 413
+
+    def chunks():  # no Content-Length: the limit is enforced while reading
+        for _ in range(11):
+            yield b"x" * (1024 * 1024)
+
+    streamed = client.post("/api/prescriptions/read", content=chunks(), headers={"Content-Type": "application/json"})
+    assert streamed.status_code == 413
+    assert client.get("/health").status_code == 200
+
+
 def test_rate_limiter_forgets_old_events(monkeypatch):
     clock = [100.0]
     monkeypatch.setattr(security.time, "monotonic", lambda: clock[0])

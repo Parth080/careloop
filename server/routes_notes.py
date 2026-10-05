@@ -1,36 +1,15 @@
 """Care notes: AI drafts from a spoken update, then the person's approved, editable record."""
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import ColumnElement, or_, select
 from sqlalchemy.orm import Session, selectinload
 
-from .ai import UnusableDraft, draft_notes, get_ai_client, model_name
+from .ai import AIClient, check_ai_limits, draft_notes, friendly_ai_errors, model_name
 from .db import Member, Note, utcnow
 from .schemas import NoteCreate, NoteOut, NoteUpdate, ProposeRequest, ProposeResponse
-from .security import DB, CurrentMember, RateLimiter, client_ip, too_many
+from .security import DB, CurrentMember, client_ip
 
 router = APIRouter(prefix="/api/notes", tags=["notes"])
-
-AIClient = Annotated[OpenAI, Depends(get_ai_client)]
-
-# AI drafts spend the server's Nebius credits, so cap them per care profile (shared by its members,
-# so inviting more people doesn't raise it), per network, and for the whole server per day.
-profile_draft_limiter = RateLimiter(limit=40, window=300)
-network_draft_limiter = RateLimiter(limit=60, window=300)
-daily_draft_limiter = RateLimiter(limit=3000, window=86_400)
-draft_limiters = (profile_draft_limiter, network_draft_limiter, daily_draft_limiter)
-
-
-def within_draft_limits(profile_id: int, ip: str) -> bool:
-    checks = ((profile_draft_limiter, str(profile_id)), (network_draft_limiter, ip), (daily_draft_limiter, "server"))
-    if any(limiter.is_limited(key) for limiter, key in checks):
-        return False
-    for limiter, key in checks:
-        limiter.record(key)
-    return True
 
 
 def visible_to(me: Member) -> tuple[ColumnElement[bool], ...]:
@@ -65,22 +44,10 @@ def find_note(db: Session, me: Member, note_id: int) -> Note:
 
 @router.post("/propose")
 def propose_notes(body: ProposeRequest, request: Request, me: CurrentMember, db: DB, client: AIClient) -> ProposeResponse:
-    if not within_draft_limits(me.profile_id, client_ip(request)):
-        raise too_many("That's a lot of notes in a short time. Please wait a few minutes.")
+    check_ai_limits(me.profile_id, client_ip(request))
     db.close()  # the model call can take seconds; don't hold a database connection meanwhile
-    try:
+    with friendly_ai_errors("The assistant couldn't organize that. Your words are still there; please try again."):
         notes = draft_notes(client, body.transcript)
-    except UnusableDraft as exc:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY, "The assistant couldn't organize that. Your words are still there; please try again."
-        ) from exc
-    except APITimeoutError as exc:
-        raise HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, "The assistant took too long. Please try again.") from exc
-    except RateLimitError as exc:
-        raise too_many("The assistant is busy. Please try again shortly.") from exc
-    except (APIConnectionError, APIStatusError) as exc:
-        # Provider errors may echo request details, which can be private, so keep the message generic.
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Couldn't reach the assistant. Please try again.") from exc
     return ProposeResponse(notes=notes, model=model_name())
 
 

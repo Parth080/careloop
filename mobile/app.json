@@ -21,7 +21,10 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.parth.careloop"
+      "package": "com.parth.careloop",
+      "permissions": [
+        "SCHEDULE_EXACT_ALARM"
+      ]
     },
     "plugins": [
       [
@@ -37,7 +40,22 @@
           "contactsPermission": "Allow CareLoop to select an emergency or doctor contact you choose."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "@react-native-community/datetimepicker",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "CareLoop uses the camera only when you photograph a prescription for it to read.",
+          "photosPermission": "CareLoop opens a prescription photo you choose so it can read it.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#176A46"
+        }
+      ]
     ],
     "web": {
       "favicon": "./assets/favicon.png"

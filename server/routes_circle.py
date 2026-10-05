@@ -7,7 +7,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .db import CareProfile, Invite, Member, Note, TrustedContact, utcnow
+from .db import Appointment, CareProfile, DoseLog, Invite, Medication, Member, Note, TrustedContact, utcnow
 from .schemas import CircleOut, CreateProfileRequest, InviteOut, InviteRequest, JoinRequest, MemberOut, ProfileOut, SessionOut
 from .security import (
     DB,
@@ -80,7 +80,7 @@ def signed_in(db: Session, member: Member) -> SessionOut:
 
 
 def delete_profile_data(db: Session, profile_id: int) -> None:
-    for model in (Note, TrustedContact, Invite, Member):
+    for model in (Note, DoseLog, Medication, Appointment, TrustedContact, Invite, Member):
         db.execute(delete(model).where(model.profile_id == profile_id))
     db.execute(delete(CareProfile).where(CareProfile.id == profile_id))
 

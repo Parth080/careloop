@@ -3,11 +3,23 @@ import { ActivityIndicator, AppState, RefreshControl, ScrollView, Text, View } f
 
 import { ApiError, careApi } from '../api';
 import { readSnapshot, writeSnapshot, type Snapshot } from '../cache';
+import Appointments from '../components/Appointments';
 import CareCircle from '../components/CareCircle';
 import { Button, Notice } from '../components/controls';
+import Medicines from '../components/Medicines';
 import NoteComposer from '../components/NoteComposer';
 import NoteList from '../components/NoteList';
+import TodayDoses from '../components/TodayDoses';
 import TrustedContacts from '../components/TrustedContacts';
+import { localDate } from '../model';
+import {
+  allowReminders,
+  readReminderSetting,
+  remindersAllowed,
+  saveReminderSetting,
+  syncReminders,
+  type ReminderSetting,
+} from '../reminders';
 import { colors, ui } from '../theme';
 
 type Props = { token: string; onSignedOut: (notice?: string) => void };
@@ -17,13 +29,23 @@ export default function Home({ token, onSignedOut }: Props) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [offline, setOffline] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [reminderSetting, setReminderSetting] = useState<ReminderSetting | null | undefined>(undefined); // undefined: still loading
+  const [notificationsAllowed, setNotificationsAllowed] = useState(false);
   const loadedFromServer = useRef(false);
 
   const refresh = useCallback(async () => {
+    const today = localDate();
     try {
-      const [circle, notes, contacts] = await Promise.all([api.circle(), api.notes(), api.contacts()]);
+      const [circle, notes, contacts, medicines, doses, appointments] = await Promise.all([
+        api.circle(),
+        api.notes(),
+        api.contacts(),
+        api.medicines(),
+        api.doses(today, today),
+        api.appointments(),
+      ]);
       loadedFromServer.current = true;
-      setData({ circle, notes, contacts });
+      setData({ circle, notes, contacts, medicines, doses, appointments });
       setOffline(false);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -32,12 +54,14 @@ export default function Home({ token, onSignedOut }: Props) {
         setOffline(true);
       }
     }
+    setNotificationsAllowed(await remindersAllowed().catch(() => false));
   }, [api, onSignedOut]);
 
   useEffect(() => {
     void readSnapshot().then((saved) => {
       if (saved && !loadedFromServer.current) setData(saved); // show the last copy until the server answers
     });
+    void readReminderSetting().then(setReminderSetting);
     void refresh();
     // Pick up what the rest of the care circle changed whenever the app comes back to the screen.
     const subscription = AppState.addEventListener('change', (state) => {
@@ -49,6 +73,35 @@ export default function Home({ token, onSignedOut }: Props) {
   useEffect(() => {
     if (data && loadedFromServer.current) void writeSnapshot(data);
   }, [data]);
+
+  const forSelf = data?.circle.me.role === 'care_recipient';
+  // Reminders default to on for the older adult, and for a caregiver while the older adult isn't on CareLoop.
+  const remindersOn = reminderSetting
+    ? reminderSetting === 'on'
+    : !!data && (forSelf || !data.circle.members.some((member) => member.role === 'care_recipient'));
+
+  useEffect(() => {
+    if (!data || reminderSetting === undefined) return; // until the saved setting loads, the default could be wrong
+    void syncReminders({
+      enabled: remindersOn,
+      medicines: data.medicines,
+      logs: data.doses,
+      appointments: data.appointments,
+      personName: data.circle.profile.person_name,
+      forSelf: data.circle.me.role === 'care_recipient',
+    }).catch(() => undefined); // reminders are best effort; the Today list still works
+  }, [data, reminderSetting, remindersOn, notificationsAllowed]);
+
+  async function setReminders(on: boolean): Promise<boolean> {
+    if (on) {
+      const allowed = await allowReminders();
+      setNotificationsAllowed(allowed);
+      if (!allowed) return false;
+    }
+    await saveReminderSetting(on ? 'on' : 'off');
+    setReminderSetting(on ? 'on' : 'off');
+    return true;
+  }
 
   async function pullToRefresh() {
     setRefreshing(true);
@@ -71,9 +124,8 @@ export default function Home({ token, onSignedOut }: Props) {
     );
   }
 
-  const { circle, notes, contacts } = data;
+  const { circle, notes, contacts, medicines, doses, appointments } = data;
   const person = circle.profile.person_name;
-  const forSelf = circle.me.role === 'care_recipient';
 
   return (
     <ScrollView
@@ -88,8 +140,20 @@ export default function Home({ token, onSignedOut }: Props) {
         {forSelf ? 'Tell CareLoop how you feel, or about a medicine or doctor visit.' : `Keep ${person}'s notes and contacts up to date.`}
       </Text>
       {offline && <Notice message="You're offline. Showing what was last saved on this phone; changes need the internet." />}
+      <TodayDoses
+        medicines={medicines}
+        logs={doses}
+        api={api}
+        personName={person}
+        forSelf={forSelf}
+        reminders={{ on: remindersOn, allowed: notificationsAllowed }}
+        onSetReminders={setReminders}
+        onChanged={refresh}
+      />
       <TrustedContacts contacts={contacts} api={api} onChanged={refresh} />
       <NoteComposer api={api} personName={person} forSelf={forSelf} onSaved={refresh} />
+      <Medicines medicines={medicines} api={api} onChanged={refresh} />
+      <Appointments appointments={appointments} api={api} onChanged={refresh} />
       <NoteList notes={notes} myId={circle.me.id} api={api} onChanged={refresh} />
       <CareCircle circle={circle} api={api} onChanged={refresh} onSignedOut={onSignedOut} />
     </ScrollView>

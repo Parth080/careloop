@@ -2,11 +2,11 @@
 
 import os
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, String, Text, UniqueConstraint, create_engine, event
 from sqlalchemy.engine import Dialect, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -95,6 +95,73 @@ class Note(Base):
     source_text: Mapped[str | None] = mapped_column(Text)  # the words the person approved before AI drafting
     model: Mapped[str | None] = mapped_column(String(100))
     private: Mapped[bool] = mapped_column(Boolean, default=False)  # visible only to its author
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+    created_by: Mapped[Member | None] = relationship(foreign_keys=[created_by_id])
+    updated_by: Mapped[Member | None] = relationship(foreign_keys=[updated_by_id])
+
+
+class Medication(Base):
+    """A medicine someone in the circle confirmed, usually after checking it against a prescription photo."""
+
+    __tablename__ = "medications"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("care_profiles.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    strength: Mapped[str | None] = mapped_column(String(60))
+    form: Mapped[str | None] = mapped_column(String(40))
+    dose: Mapped[str | None] = mapped_column(String(60))  # amount each time, e.g. "1 tablet"
+    times: Mapped[list[str]] = mapped_column(JSON, default=list)  # local "HH:MM" times of day, sorted
+    food: Mapped[str | None] = mapped_column(String(20))
+    as_needed: Mapped[bool] = mapped_column(Boolean, default=False)
+    instructions: Mapped[str | None] = mapped_column(String(300))
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date)  # last day, inclusive; None while ongoing
+    source_text: Mapped[str | None] = mapped_column(String(300))  # the prescription line it came from
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
+    updated_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
+
+    created_by: Mapped[Member | None] = relationship(foreign_keys=[created_by_id])
+    updated_by: Mapped[Member | None] = relationship(foreign_keys=[updated_by_id])
+
+
+class DoseLog(Base):
+    """Whether one scheduled dose was taken or skipped, and who said so."""
+
+    __tablename__ = "dose_logs"
+    __table_args__ = (UniqueConstraint("medication_id", "day", "time"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("care_profiles.id", ondelete="CASCADE"), index=True)
+    medication_id: Mapped[int] = mapped_column(ForeignKey("medications.id", ondelete="CASCADE"), index=True)
+    day: Mapped[date] = mapped_column(Date)  # the local calendar day the dose was due
+    time: Mapped[str] = mapped_column(String(5))  # the scheduled "HH:MM"
+    status: Mapped[str] = mapped_column(String(10))  # "taken" or "skipped"
+    recorded_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
+    recorded_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
+
+    recorded_by: Mapped[Member | None] = relationship()
+
+
+class Appointment(Base):
+    """A doctor visit, test or call, on a local calendar day with an optional time."""
+
+    __tablename__ = "appointments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    profile_id: Mapped[int] = mapped_column(ForeignKey("care_profiles.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(120))
+    day: Mapped[date] = mapped_column(Date)
+    time: Mapped[str | None] = mapped_column(String(5))  # local "HH:MM"; None until someone knows it
+    place: Mapped[str | None] = mapped_column(String(200))
+    with_whom: Mapped[str | None] = mapped_column(String(120))
+    notes: Mapped[str | None] = mapped_column(String(500))
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("members.id", ondelete="SET NULL"))

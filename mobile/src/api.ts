@@ -1,13 +1,23 @@
 import { apiBaseUrl } from './config';
 import {
+  parsePackageReading,
+  parsePrescriptionReading,
   parseProposal,
+  type Appointment,
+  type AppointmentInput,
   type Circle,
   type Contact,
   type ContactRole,
+  type DoseLog,
+  type DoseStatus,
   type Invite,
+  type Medicine,
+  type MedicineInput,
   type NewNote,
   type Note,
   type NoteInput,
+  type PackageReading,
+  type PrescriptionReading,
   type Proposal,
   type Role,
   type Session,
@@ -24,6 +34,7 @@ export class ApiError extends Error {
 }
 
 type Options = { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; token?: string; timeoutMs?: number };
+type DoseKey = { medication_id: number; day: string; time: string };
 
 function messageFor(status: number, detail: unknown): string {
   if (typeof detail === 'string' && detail) return detail; // the server writes these for people, not developers
@@ -93,6 +104,35 @@ export function careApi(token: string) {
     createNote: (note: NewNote) => call<Note>('/api/notes', { method: 'POST', body: note }),
     updateNote: (id: number, note: NoteInput) => call<Note>(`/api/notes/${id}`, { method: 'PUT', body: note }),
     deleteNote: (id: number) => call<void>(`/api/notes/${id}`, { method: 'DELETE' }),
+
+    // A vision model reads the photo, then Nemotron organizes it: usually about 10 s, at worst about 140 s with retries.
+    readPrescription: async (imageBase64: string, mediaType: 'image/jpeg' | 'image/png'): Promise<PrescriptionReading> =>
+      parsePrescriptionReading(await call<unknown>('/api/prescriptions/read', {
+        method: 'POST',
+        body: { image_base64: imageBase64, media_type: mediaType },
+        timeoutMs: 150_000,
+      })),
+    // One reader, then Nemotron: printed text is quick to read.
+    readPackage: async (imageBase64: string): Promise<PackageReading> =>
+      parsePackageReading(await call<unknown>('/api/medicines/read-package', {
+        method: 'POST',
+        body: { image_base64: imageBase64, media_type: 'image/jpeg' },
+        timeoutMs: 90_000,
+      })),
+    medicines: () => call<Medicine[]>('/api/medicines'),
+    addMedicine: (medicine: MedicineInput) => call<Medicine>('/api/medicines', { method: 'POST', body: medicine }),
+    updateMedicine: (id: number, medicine: MedicineInput) => call<Medicine>(`/api/medicines/${id}`, { method: 'PUT', body: medicine }),
+    deleteMedicine: (id: number) => call<void>(`/api/medicines/${id}`, { method: 'DELETE' }),
+    doses: (fromDay: string, toDay: string) => call<DoseLog[]>(`/api/doses?from_day=${fromDay}&to_day=${toDay}`),
+    recordDose: (dose: DoseKey & { status: DoseStatus }) => call<DoseLog>('/api/doses', { method: 'PUT', body: dose }),
+    undoDose: ({ medication_id, day, time }: DoseKey) =>
+      call<void>(`/api/doses?medication_id=${medication_id}&day=${day}&time=${encodeURIComponent(time)}`, { method: 'DELETE' }),
+
+    appointments: () => call<Appointment[]>('/api/appointments'),
+    addAppointment: (appointment: AppointmentInput) => call<Appointment>('/api/appointments', { method: 'POST', body: appointment }),
+    updateAppointment: (id: number, appointment: AppointmentInput) =>
+      call<Appointment>(`/api/appointments/${id}`, { method: 'PUT', body: appointment }),
+    deleteAppointment: (id: number) => call<void>(`/api/appointments/${id}`, { method: 'DELETE' }),
 
     contacts: () => call<Contact[]>('/api/contacts'),
     saveContact: (role: ContactRole, contact: { name: string; phone: string }) =>

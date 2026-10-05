@@ -11,8 +11,9 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 from fastapi import FastAPI  # noqa: E402
 
-from . import routes_circle, routes_contacts, routes_notes  # noqa: E402
+from . import routes_appointments, routes_circle, routes_contacts, routes_medicines, routes_notes  # noqa: E402
 from .db import init_db  # noqa: E402
+from .security import BodySizeLimit  # noqa: E402
 
 
 @asynccontextmanager
@@ -22,7 +23,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="CareLoop API", version="0.2.0", lifespan=lifespan)
-for routes in (routes_circle, routes_notes, routes_contacts):
+app.add_middleware(BodySizeLimit)
+for routes in (routes_circle, routes_notes, routes_medicines, routes_appointments, routes_contacts):
     app.include_router(routes.router)
 
 

@@ -1,20 +1,25 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, KeyboardAvoidingView, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { CareApi } from '../api';
 import {
+  addDays,
   categoryLabels,
   cleanNote,
   describeTime,
   editableFields,
   errorMessage,
   filterNotes,
+  localDate,
   noteProblem,
+  suggestDayAndTime,
+  type AppointmentInput,
   type Note,
   type NoteInput,
 } from '../model';
 import { readAloud } from '../readAloud';
 import { colors, ui } from '../theme';
+import AppointmentForm from './AppointmentForm';
 import { Button, Notice } from './controls';
 import NoteEditor from './NoteEditor';
 
@@ -25,7 +30,40 @@ export default function NoteList({ notes, myId, api, onChanged }: Props) {
   const [editing, setEditing] = useState<{ id: number; value: NoteInput } | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [message, setMessage] = useState('');
+  const [planning, setPlanning] = useState<{ heard: string | null; initial: AppointmentInput } | null>(null);
+  const [busy, setBusy] = useState(false);
   const shown = useMemo(() => filterNotes(notes, query), [notes, query]);
+
+  function planAppointment(note: Note) {
+    // "Tomorrow" means the day after the note was spoken, not the day after today.
+    const today = localDate();
+    const suggestion = suggestDayAndTime(note.event_time_text ?? note.details, localDate(new Date(note.created_at)));
+    setPlanning({
+      heard: note.event_time_text,
+      initial: {
+        title: note.title,
+        day: suggestion.day && suggestion.day >= today ? suggestion.day : addDays(today, 1),
+        time: suggestion.time,
+        place: null,
+        with_whom: null,
+        notes: note.details,
+      },
+    });
+  }
+
+  async function saveAppointment(appointment: AppointmentInput) {
+    setBusy(true);
+    try {
+      await api.addAppointment(appointment);
+      setPlanning(null);
+      setMessage('Added to appointments.');
+      onChanged();
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function saveEdit() {
     if (!editing) return;
@@ -124,15 +162,29 @@ export default function NoteList({ notes, myId, api, onChanged }: Props) {
               />
               <Button label="Delete" variant="danger" accessibilityLabel={`Delete: ${note.title}`} onPress={() => confirmDelete(note)} />
             </View>
+            {note.category === 'appointment' && (
+              <Button label="📅  Add to appointments" variant="outline" onPress={() => planAppointment(note)} />
+            )}
           </View>
         ),
       )}
+      <Modal visible={planning !== null} animationType="slide" onRequestClose={() => setPlanning(null)}>
+        <KeyboardAvoidingView style={styles.modal} behavior="padding">
+          <ScrollView contentContainerStyle={ui.page} keyboardShouldPersistTaps="handled">
+            <Text style={ui.sectionTitle}>Add to appointments</Text>
+            {planning && (
+              <AppointmentForm initial={planning.initial} heard={planning.heard} busy={busy} onSave={saveAppointment} onCancel={() => setPlanning(null)} />
+            )}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   section: { gap: 12 },
+  modal: { flex: 1, backgroundColor: colors.page },
   badges: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   category: { color: '#397653', fontSize: 13, fontWeight: '800', letterSpacing: 1 },
   private: { color: colors.caution, fontSize: 12, fontWeight: '800', letterSpacing: 1, borderWidth: 1, borderColor: colors.caution, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },

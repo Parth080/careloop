@@ -1,7 +1,7 @@
 import httpx
 from openai import APITimeoutError
 
-from server import ai, routes_notes
+from server import ai
 
 from .helpers import NOTE, auth, invite_and_join, new_profile
 
@@ -41,6 +41,9 @@ def test_draft_retries_once_before_giving_up(client, fake_ai):
     recovered = client.post("/api/notes/propose", json={"transcript": "I felt sick"}, headers=auth(asha["token"]))
     assert recovered.status_code == 200
     assert [request["temperature"] for request in fake_ai.requests] == [0.0, 0.4]
+    first, retry = (request["messages"][0]["content"] for request in fake_ai.requests)
+    assert "previous reply could not be used" not in first
+    assert "previous reply could not be used" in retry  # the retry is told what went wrong
 
     fake_ai.reply_without_tool()
     fake_ai.reply_with_notes({**NOTE, "category": "diagnosis"})  # invalid output counts as a failure too
@@ -58,7 +61,7 @@ def test_draft_reports_a_slow_assistant(client, fake_ai):
 
 def test_draft_limit_is_shared_by_everyone_in_a_care_profile(client, fake_ai, monkeypatch):
     # Otherwise one person could mint members with invite codes to multiply their AI budget.
-    monkeypatch.setattr(routes_notes.profile_draft_limiter, "limit", 2)
+    monkeypatch.setattr(ai.profile_ai_limiter, "limit", 2)
     asha = new_profile(client)
     priya = invite_and_join(client, asha["token"])
     meera = new_profile(client, your_name="Meera")
