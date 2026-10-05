@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "CareLoop",
+    "slug": "careloop",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.parth.careloop"
+    },
+    "android": {
+      "blockedPermissions": ["android.permission.WRITE_CONTACTS"],
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "com.parth.careloop"
+    },
+    "plugins": [
+      "expo-speech-recognition",
+      ["expo-contacts", { "contactsPermission": "Allow CareLoop to select an emergency or doctor contact you choose." }]
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

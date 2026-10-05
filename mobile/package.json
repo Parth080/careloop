@@ -1,0 +1,26 @@
+{
+  "name": "careloop-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "main": "index.ts",
+  "dependencies": {
+    "expo": "~57.0.26",
+    "expo-contacts": "~57.0.6",
+    "expo-dev-client": "~57.0.19",
+    "expo-status-bar": "~57.0.1",
+    "expo-speech-recognition": "^57.0.0",
+    "expo-sqlite": "~57.0.3",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  }
+}

@@ -1,0 +1,74 @@
+# Secrets and local configuration; keep safe setup templates.
+.env*
+!.env.example
+*.key
+*.pem
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+
+# Python dependencies and generated caches.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript dependencies and Expo-generated files.
+node_modules/
+.expo/
+.expo-shared/
+/mobile/ios/
+/mobile/android/
+expo-env.d.ts
+.metro-health-check*
+*.tsbuildinfo
+
+# Build outputs and installable app archives.
+dist/
+build/
+web-build/
+*.apk
+*.aab
+*.ipa
+*.bundle
+
+# Runtime data and private uploads.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+/local-data/
+/uploads/
+/recordings/
+/prescriptions/
+/server/uploads/
+/server/recordings/
+/server/prescriptions/
+
+# Local setup and model comparison scripts.
+/hello.py
+/compare_models.py
+
+# Keep only the root README in the repository's Markdown documentation.
+*.md
+!/README.md
+
+# Logs and editor/OS files.
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.DS_Store
+.idea/
+*.swp
+*.swo
+*~
