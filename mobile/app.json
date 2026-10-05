@@ -11,7 +11,9 @@
       "bundleIdentifier": "com.parth.careloop"
     },
     "android": {
-      "blockedPermissions": ["android.permission.WRITE_CONTACTS"],
+      "blockedPermissions": [
+        "android.permission.WRITE_CONTACTS"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -22,8 +24,20 @@
       "package": "com.parth.careloop"
     },
     "plugins": [
-      "expo-speech-recognition",
-      ["expo-contacts", { "contactsPermission": "Allow CareLoop to select an emergency or doctor contact you choose." }]
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "CareLoop listens only after you tap Speak, to turn your words into a note.",
+          "speechRecognitionPermission": "CareLoop turns your spoken words into text so you can check them before saving."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow CareLoop to select an emergency or doctor contact you choose."
+        }
+      ],
+      "expo-secure-store"
     ],
     "web": {
       "favicon": "./assets/favicon.png"

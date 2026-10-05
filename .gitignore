@@ -50,6 +50,7 @@ web-build/
 /uploads/
 /recordings/
 /prescriptions/
+/server/data/
 /server/uploads/
 /server/recordings/
 /server/prescriptions/
