@@ -4,6 +4,7 @@ import { ActivityIndicator, AppState, RefreshControl, ScrollView, Text, View } f
 import { ApiError, careApi } from '../api';
 import { readSnapshot, writeSnapshot, type Snapshot } from '../cache';
 import Appointments from '../components/Appointments';
+import AskCareLoop from '../components/AskCareLoop';
 import CareCircle from '../components/CareCircle';
 import { Button, Notice } from '../components/controls';
 import Medicines from '../components/Medicines';
@@ -151,7 +152,8 @@ export default function Home({ token, onSignedOut }: Props) {
         onChanged={refresh}
       />
       <TrustedContacts contacts={contacts} api={api} onChanged={refresh} />
-      <NoteComposer api={api} personName={person} forSelf={forSelf} onSaved={refresh} />
+      <NoteComposer api={api} personName={person} forSelf={forSelf} contacts={contacts} onSaved={refresh} />
+      <AskCareLoop api={api} contacts={contacts} personName={person} forSelf={forSelf} onSaved={refresh} />
       <Medicines medicines={medicines} api={api} onChanged={refresh} />
       <Appointments appointments={appointments} api={api} onChanged={refresh} />
       <NoteList notes={notes} myId={circle.me.id} api={api} onChanged={refresh} />

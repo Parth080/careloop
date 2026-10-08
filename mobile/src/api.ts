@@ -1,10 +1,14 @@
 import { apiBaseUrl } from './config';
 import {
+  parseAskResult,
   parsePackageReading,
   parsePrescriptionReading,
   parseProposal,
+  parseVisitSummary,
+  utcOffsetMinutes,
   type Appointment,
   type AppointmentInput,
+  type AskResult,
   type Circle,
   type Contact,
   type ContactRole,
@@ -21,6 +25,7 @@ import {
   type Proposal,
   type Role,
   type Session,
+  type VisitSummary,
 } from './model';
 
 export class ApiError extends Error {
@@ -35,6 +40,7 @@ export class ApiError extends Error {
 
 type Options = { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; token?: string; timeoutMs?: number };
 type DoseKey = { medication_id: number; day: string; time: string };
+type SummaryRequest = { from_day: string; to_day: string; appointment_id: number | null };
 
 function messageFor(status: number, detail: unknown): string {
   if (typeof detail === 'string' && detail) return detail; // the server writes these for people, not developers
@@ -133,6 +139,21 @@ export function careApi(token: string) {
     updateAppointment: (id: number, appointment: AppointmentInput) =>
       call<Appointment>(`/api/appointments/${id}`, { method: 'PUT', body: appointment }),
     deleteAppointment: (id: number) => call<void>(`/api/appointments/${id}`, { method: 'DELETE' }),
+
+    // NVIDIA Nemotron Ultra reads the period's notes: usually about 5 s, at worst about 90 s with a retry.
+    visitSummary: async (body: SummaryRequest): Promise<VisitSummary> =>
+      parseVisitSummary(await call<unknown>('/api/summary', {
+        method: 'POST',
+        body: { ...body, utc_offset_minutes: utcOffsetMinutes() },
+        timeoutMs: 100_000,
+      })),
+    // Usually 2 to 5 s; at worst about 60 s with a retry.
+    ask: async (question: string): Promise<AskResult> =>
+      parseAskResult(await call<unknown>('/api/ask', {
+        method: 'POST',
+        body: { question, utc_offset_minutes: utcOffsetMinutes() },
+        timeoutMs: 70_000,
+      })),
 
     contacts: () => call<Contact[]>('/api/contacts'),
     saveContact: (role: ContactRole, contact: { name: string; phone: string }) =>

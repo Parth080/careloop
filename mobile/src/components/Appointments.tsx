@@ -15,6 +15,7 @@ import { readAloud } from '../readAloud';
 import { colors, ui } from '../theme';
 import AppointmentForm from './AppointmentForm';
 import { Button, Notice } from './controls';
+import VisitSummary from './VisitSummary';
 
 type Props = { appointments: Appointment[]; api: CareApi; onChanged: () => void };
 type Editing = { id: number | null; initial: AppointmentInput } | null;
@@ -22,6 +23,7 @@ type Editing = { id: number | null; initial: AppointmentInput } | null;
 export default function Appointments({ appointments, api, onChanged }: Props) {
   const [editing, setEditing] = useState<Editing>(null);
   const [showPast, setShowPast] = useState(false);
+  const [summaryFor, setSummaryFor] = useState<{ appointment: Appointment | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const today = localDate();
@@ -87,6 +89,9 @@ export default function Appointments({ appointments, api, onChanged }: Props) {
         <Button label="Edit" variant="text" onPress={() => setEditing({ id: appointment.id, initial: appointmentInput(appointment) })} />
         <Button label="Remove" variant="danger" onPress={() => confirmRemove(appointment)} />
       </View>
+      {appointment.day >= today && (
+        <Button label="📋  Prepare for this visit" variant="outline" onPress={() => setSummaryFor({ appointment })} />
+      )}
     </View>
   );
 
@@ -110,6 +115,7 @@ export default function Appointments({ appointments, api, onChanged }: Props) {
               });
             }}
           />
+          <Button label="📋  Health summary for a doctor" variant="text" onPress={() => setSummaryFor({ appointment: null })} />
           {past.length > 0 && (
             <Pressable accessibilityRole="button" accessibilityState={{ expanded: showPast }} onPress={() => setShowPast(!showPast)}>
               <Text style={styles.link}>
@@ -121,6 +127,9 @@ export default function Appointments({ appointments, api, onChanged }: Props) {
         </>
       )}
       <Notice message={message} />
+      {summaryFor && (
+        <VisitSummary api={api} appointments={appointments} appointment={summaryFor.appointment} onClose={() => setSummaryFor(null)} />
+      )}
     </View>
   );
 }

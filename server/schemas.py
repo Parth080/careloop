@@ -397,6 +397,241 @@ class AppointmentOut(AppointmentIn):
     updated_by_name: str | None
 
 
+LONGEST_SUMMARY_DAYS = 92  # about three months
+SummarySection = Literal["symptoms", "medicines", "other", "questions"]
+SECTION_ALIASES = {
+    "symptom": "symptoms",
+    "medicine": "medicines",
+    "medication": "medicines",
+    "medications": "medicines",
+    "question": "questions",
+    "event": "other",
+    "events": "other",
+    "general": "other",
+    "news": "other",
+}
+
+
+def note_numbers(value: object) -> object:
+    """[1, 3], "1, 3", 3 or ["N1", "3"] as [1, 3]: models write note references in all of these ways."""
+    if isinstance(value, str):
+        value = re.findall(r"\d{1,6}", value)
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = [value]
+    if not isinstance(value, list):
+        return value
+    numbers = []
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, int):
+            numbers.append(item)
+        elif isinstance(item, float) and item.is_integer() and abs(item) < 1e6:
+            numbers.append(int(item))
+        elif isinstance(item, str) and len(found := re.findall(r"\d{1,6}", item)) == 1:
+            numbers.append(int(found[0]))
+    return numbers
+
+
+class SummaryRequest(Input):
+    from_day: date = Field(ge=date(2000, 1, 1))
+    to_day: date = Field(le=date(2100, 12, 31))
+    utc_offset_minutes: int = Field(ge=-720, le=840)  # the phone's time zone, so each day starts at its own midnight
+    appointment_id: int | None = None
+
+    @model_validator(mode="after")
+    def sensible_period(self) -> "SummaryRequest":
+        if self.to_day < self.from_day:
+            raise ValueError("The period can't end before it starts")
+        if (self.to_day - self.from_day).days >= LONGEST_SUMMARY_DAYS:
+            raise ValueError("Choose at most three months")
+        return self
+
+
+class PointDraft(BaseModel):
+    """One point the assistant proposes for a doctor-visit summary, with the notes it is based on."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    section: SummarySection
+    text: str = Field(min_length=1, max_length=300)
+    notes: list[int] = Field(min_length=1, max_length=60, description="The numbers of every note this point is based on")
+
+    @model_validator(mode="before")
+    @classmethod
+    def tidy(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        point = dict(data)
+        section = str(point.get("section") or "").strip().lower()
+        point["section"] = SECTION_ALIASES.get(section, section)
+        point["notes"] = note_numbers(point.get("notes"))
+        return point
+
+
+class SummaryDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    points: list[PointDraft] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def tidy(cls, data: object) -> object:
+        """Keep the points that make sense instead of losing the whole summary to one bad point."""
+        if not isinstance(data, dict):
+            return data
+        points = data.get("points") or []
+        if isinstance(points, str):  # some models wrap the list in a string
+            points = json.JSONDecoder().raw_decode(points.strip())[0]
+        if not isinstance(points, list):
+            raise ValueError("points must be a list")
+        usable = []
+        for point in points:
+            try:
+                usable.append(PointDraft.model_validate(point))
+            except ValueError:  # pydantic's ValidationError is a ValueError
+                continue
+        if points and not usable:
+            raise ValueError("None of the points could be used")
+        return {"points": usable}
+
+
+class DoseCountsOut(BaseModel):
+    due: int  # doses due so far in the period: taken + skipped + not_marked
+    taken: int
+    skipped: int
+    not_marked: int  # nobody marked them, so it isn't known whether they were taken
+
+
+class SummaryMedicine(BaseModel):
+    id: int
+    name: str
+    strength: str | None
+    dose: str | None
+    times: list[str]
+    food: FoodTiming | None
+    as_needed: bool
+    start_date: date
+    end_date: date | None
+    doses: DoseCountsOut | None  # None for medicines taken only when needed
+
+
+class SummaryPoint(BaseModel):
+    section: SummarySection
+    text: str
+    note_ids: list[int]
+
+
+class VisitSummary(BaseModel):
+    person_name: str
+    from_day: date
+    to_day: date
+    appointment: AppointmentOut | None
+    medicines: list[SummaryMedicine]
+    points: list[SummaryPoint]
+    notes: list[NoteOut]  # the shared notes from the period, oldest first
+    notes_left_out: int  # older notes beyond the limit
+    model: str | None  # None when the assistant wasn't used
+    checked_by: str | None  # the model that checked each point against its notes
+    problem: str | None  # why there are notes but no points
+
+
+AnswerKind = Literal["answer", "not_found", "ask_doctor"]
+ANSWER_KIND_ALIASES = {
+    "none": "not_found",
+    "unknown": "not_found",
+    "no_answer": "not_found",
+    "notfound": "not_found",
+    "doctor": "ask_doctor",
+    "medical_advice": "ask_doctor",
+    "advice": "ask_doctor",
+}
+
+
+class AnswerDraft(BaseModel):
+    """The assistant's answer to a question about the care records, with the labels of the records it used."""
+
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
+    kind: AnswerKind
+    answer: str = Field(default="", max_length=1000)
+    sources: list[str] = Field(default_factory=list, description="Labels of the records used, such as N3 or M1")
+    urgent: bool = Field(default=False, description="True if the question describes something that may need urgent help now")
+
+    @model_validator(mode="before")
+    @classmethod
+    def tidy(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        draft = dict(data)
+        kind = re.sub(r"[\s-]+", "_", str(draft.get("kind") or "").strip().lower())
+        draft["kind"] = ANSWER_KIND_ALIASES.get(kind, kind)
+        draft["answer"] = draft["answer"][:1000] if isinstance(draft.get("answer"), str) else ""
+        sources = draft.get("sources")
+        items = sources if isinstance(sources, list) else [] if sources is None else [sources]
+        draft["sources"] = [label for item in items for label in re.findall(r"\b[CMDAN]\d{1,4}\b", str(item).upper())]
+        if not isinstance(draft.get("urgent"), bool):
+            draft["urgent"] = str(draft.get("urgent")).strip().lower() == "true"
+        return draft
+
+
+class AskRequest(Input):
+    question: str = Field(min_length=2, max_length=500)
+    utc_offset_minutes: int = Field(ge=-720, le=840)
+
+
+RecordKind = Literal["note", "medicine", "dose", "appointment", "contact"]
+
+
+class AskSource(BaseModel):
+    kind: RecordKind
+    text: str
+
+
+class ClaimVerdict(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    claim: int
+    supported: bool
+
+
+class CheckReport(BaseModel):
+    """A second model's verdict on each claim: is everything in it stated by its records?"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    verdicts: list[ClaimVerdict] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def tidy(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        verdicts = data.get("verdicts") or []
+        if isinstance(verdicts, str):
+            verdicts = json.JSONDecoder().raw_decode(verdicts.strip())[0]
+        if not isinstance(verdicts, list):
+            raise ValueError("verdicts must be a list")
+        usable = []
+        for verdict in verdicts:
+            try:
+                usable.append(ClaimVerdict.model_validate(verdict))
+            except ValueError:
+                continue  # a claim without a usable verdict counts as unsupported
+        return {"verdicts": usable}
+
+
+class AskResponse(BaseModel):
+    # "records": the assistant's answer didn't pass the checks, so only the records it named are shown.
+    # "dose_records": whether doses were taken is shown exactly as recorded, never in the assistant's words.
+    kind: Literal["answer", "records", "dose_records", "not_found", "ask_doctor"]
+    answer: str | None
+    sources: list[AskSource]
+    urgent: bool
+    model: str
+    checked_by: str | None  # the model that confirmed the answer against its records
+
+
 PHONE_SEPARATORS = re.compile(r"[ ().-]")
 
 

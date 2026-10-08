@@ -2,17 +2,18 @@ import { useRef, useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
 import type { CareApi } from '../api';
-import { categoryLabels, cleanNote, errorMessage, noteProblem, type NoteInput } from '../model';
+import { categoryLabels, cleanNote, errorMessage, noteProblem, soundsUrgent, type Contact, type NoteInput } from '../model';
 import { readAloud } from '../readAloud';
 import { colors, ui } from '../theme';
 import { useVoiceInput } from '../voice';
 import { Button, Checkbox, Notice } from './controls';
 import NoteEditor from './NoteEditor';
+import UrgentHelp from './UrgentHelp';
 
 type Draft = NoteInput & { keep: boolean };
-type Props = { api: CareApi; personName: string; forSelf: boolean; onSaved: () => void };
+type Props = { api: CareApi; personName: string; forSelf: boolean; contacts: Contact[]; onSaved: () => void };
 
-export default function NoteComposer({ api, personName, forSelf, onSaved }: Props) {
+export default function NoteComposer({ api, personName, forSelf, contacts, onSaved }: Props) {
   const [words, setWords] = useState('');
   const [drafts, setDrafts] = useState<Draft[] | null>(null);
   const [draftedFrom, setDraftedFrom] = useState({ words: '', model: '' });
@@ -125,6 +126,7 @@ export default function NoteComposer({ api, personName, forSelf, onSaved }: Prop
         value={words}
         onChangeText={changeWords}
       />
+      {soundsUrgent(words) && <UrgentHelp contacts={contacts} />}
       <Text style={ui.small}>
         Organize sends these words to CareLoop's assistant (NVIDIA Nemotron on Nebius). Nothing is saved until you approve it.
       </Text>

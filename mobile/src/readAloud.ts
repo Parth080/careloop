@@ -4,5 +4,6 @@ import { speechLanguage } from './model';
 
 export function readAloud(text: string): void {
   void Speech.stop();
-  Speech.speak(text, { language: speechLanguage(text), rate: 0.9 });
+  // Android can't speak more than maxSpeechInputLength characters at once.
+  Speech.speak(text.slice(0, Speech.maxSpeechInputLength), { language: speechLanguage(text), rate: 0.9 });
 }

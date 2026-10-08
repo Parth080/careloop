@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, Linking, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Contacts from 'expo-contacts/legacy';
 
 import type { CareApi } from '../api';
 import { dialableNumber, errorMessage, type Contact, type ContactRole } from '../model';
+import { callNumber } from '../phone';
 import { colors, ui } from '../theme';
 import { Button, Chip, Notice } from './controls';
 
@@ -67,13 +68,8 @@ export default function TrustedContacts({ contacts, api, onChanged }: Props) {
   }
 
   async function call(contact: Contact) {
-    const number = dialableNumber(contact.phone);
-    if (!number) return setMessage('This number needs to be fixed before it can be called.');
-    try {
-      await Linking.openURL(`tel:${number}`);
-    } catch {
-      setMessage(`Couldn't open the phone app. Please dial ${contact.phone} yourself.`);
-    }
+    const problem = await callNumber(contact.phone);
+    if (problem) setMessage(problem);
   }
 
   function confirmRemove(role: ContactRole) {

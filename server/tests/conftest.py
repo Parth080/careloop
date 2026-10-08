@@ -77,5 +77,6 @@ def client(fake_ai: FakeAI):
     for limiter in (*limiters, *ai.ai_limiters):
         limiter.reset()
     app.dependency_overrides[ai.get_ai_client] = lambda: fake_ai
+    app.dependency_overrides[ai.get_optional_ai_client] = lambda: fake_ai
     yield TestClient(app)
     app.dependency_overrides.clear()

@@ -183,7 +183,7 @@ export function formatDay(isoDate: string, today: string = localDate()): string 
   return day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
 }
 
-export function describeSchedule(medicine: MedicineFields): string {
+export function describeSchedule(medicine: Pick<MedicineFields, 'as_needed' | 'times' | 'food'>): string {
   const when = medicine.as_needed ? 'Only when needed' : medicine.times.map(formatClock).join(', ');
   return medicine.food ? `${when} · ${foodLabels[medicine.food].toLowerCase()}` : when;
 }
@@ -527,4 +527,197 @@ export function appointmentReminders(
     }
   }
   return reminders.sort((a, b) => a.at.getTime() - b.at.getTime());
+}
+
+/** The phone's time zone as minutes ahead of UTC (India: 330), so the server counts days from local midnight. */
+export function utcOffsetMinutes(now: Date = new Date()): number {
+  return -now.getTimezoneOffset() || 0; // never -0
+}
+
+/** "2 Oct" (or "Oct 2", in the phone's language), with the year only when it isn't this year. */
+export function shortDate(isoDate: string, today: string = localDate()): string {
+  const sameYear = isoDate.slice(0, 4) === today.slice(0, 4);
+  return parseDay(isoDate).toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+export type DoseCounts = { due: number; taken: number; skipped: number; not_marked: number };
+export type SummaryMedicine = Pick<MedicineFields, 'name' | 'strength' | 'dose' | 'times' | 'food' | 'as_needed'> & {
+  id: number;
+  start_date: string;
+  end_date: string | null;
+  doses: DoseCounts | null; // null for medicines taken only when needed
+};
+export const summarySections = ['symptoms', 'medicines', 'other', 'questions'] as const;
+export type SummarySection = (typeof summarySections)[number];
+/** One point of a doctor-visit summary, with the notes it came from. */
+export type SummaryPoint = { section: SummarySection; text: string; note_ids: number[] };
+export type VisitSummary = {
+  person_name: string;
+  from_day: string;
+  to_day: string;
+  appointment: Appointment | null;
+  medicines: SummaryMedicine[];
+  points: SummaryPoint[];
+  notes: Note[]; // the shared notes from the period, oldest first
+  notes_left_out: number;
+  model: string | null; // null when the assistant wasn't needed or failed
+  checked_by: string | null; // the model that checked each point against its notes
+  problem: string | null;
+};
+export type SummaryPeriod = { key: string; label: string; from: string; to: string };
+
+/** Periods a summary can cover, all ending today: since the last visit, if there was one in the past three months. */
+export function summaryPeriods(appointments: Pick<Appointment, 'day'>[], today: string = localDate()): SummaryPeriod[] {
+  const lastVisit = appointments
+    .map((appointment) => appointment.day)
+    .filter((day) => day < today && daysBetween(day, today) <= 90)
+    .sort()
+    .at(-1);
+  const last = (days: number) => addDays(today, -(days - 1));
+  return [
+    ...(lastVisit ? [{ key: 'visit', label: `Since the last visit (${shortDate(lastVisit, today)})`, from: lastVisit, to: today }] : []),
+    { key: '2w', label: 'Last 2 weeks', from: last(14), to: today },
+    { key: '1m', label: 'Last month', from: last(30), to: today },
+    { key: '3m', label: 'Last 3 months', from: last(90), to: today },
+  ];
+}
+
+export function describeDoseCounts(counts: DoseCounts | null): string {
+  if (!counts) return 'Taken only when needed';
+  if (counts.due === 0) return 'No doses were due yet';
+  const others = [counts.skipped ? `${counts.skipped} skipped` : '', counts.not_marked ? `${counts.not_marked} not marked` : ''].filter(Boolean);
+  return `Taken ${counts.taken} of ${counts.due} doses${others.length ? ` · ${others.join(' · ')}` : ''}`;
+}
+
+export function summarySectionTitle(section: SummarySection, personName: string): string {
+  const titles: Record<SummarySection, string> = {
+    symptoms: `How ${personName} has been`,
+    medicines: 'About the medicines',
+    other: 'Other news',
+    questions: 'Questions for the doctor',
+  };
+  return titles[section];
+}
+
+/** The days the notes behind a point were written, such as "2 Oct, 5 Oct". */
+export function pointDates(point: SummaryPoint, notes: Note[], today: string = localDate()): string {
+  const days = point.note_ids
+    .map((id) => notes.find((note) => note.id === id))
+    .filter((note): note is Note => note !== undefined)
+    .map((note) => localDate(new Date(note.created_at)));
+  return [...new Set(days)].sort().map((day) => shortDate(day, today)).join(', ');
+}
+
+export const NOT_MARKED_MEANING = '"Not marked" means nobody marked the dose in CareLoop, so it isn\'t known whether it was taken.';
+
+/** " (started 4 Oct)" or " (last day 1 Oct)" for a medicine that began or ended during the summary's period. */
+export function summaryMedicinePeriod(medicine: SummaryMedicine, summary: Pick<VisitSummary, 'from_day' | 'to_day'>, today: string = localDate()): string {
+  const parts = [
+    medicine.start_date > summary.from_day ? `started ${shortDate(medicine.start_date, today)}` : '',
+    medicine.end_date && medicine.end_date < summary.to_day ? `last day ${shortDate(medicine.end_date, today)}` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? ` (${parts.join(', ')})` : '';
+}
+
+function summaryMedicineLine(medicine: SummaryMedicine, summary: VisitSummary, today: string): string {
+  const name = `${medicine.name}${medicine.strength ? ` (${medicine.strength})` : ''}${summaryMedicinePeriod(medicine, summary, today)}`;
+  return `${name} – ${medicine.dose ? `${medicine.dose}, ` : ''}${describeSchedule(medicine)}`;
+}
+
+/** The summary as plain text, to send to the doctor or family. */
+export function summaryText(summary: VisitSummary, today: string = localDate()): string {
+  const lines = [`Health summary: ${summary.person_name}`, `${shortDate(summary.from_day, today)} to ${shortDate(summary.to_day, today)}`];
+  if (summary.appointment) {
+    const { title, day, time } = summary.appointment;
+    lines.push(`For: ${title}, ${shortDate(day, today)}${time ? `, ${formatClock(time)}` : ''}`);
+  }
+  if (summary.medicines.length > 0) {
+    lines.push('', 'MEDICINES');
+    for (const medicine of summary.medicines) {
+      lines.push(`• ${summaryMedicineLine(medicine, summary, today)}. ${describeDoseCounts(medicine.doses)}.`);
+    }
+    if (summary.medicines.some((medicine) => (medicine.doses?.not_marked ?? 0) > 0)) lines.push(NOT_MARKED_MEANING);
+  }
+  for (const section of summarySections) {
+    const points = summary.points.filter((point) => point.section === section);
+    if (points.length === 0) continue;
+    lines.push('', summarySectionTitle(section, summary.person_name).toUpperCase());
+    for (const point of points) lines.push(`• ${point.text} (${pointDates(point, summary.notes, today)})`);
+  }
+  if (summary.notes.length > 0) {
+    lines.push('', `ALL NOTES (${summary.notes.length})`);
+    for (const note of summary.notes) {
+      lines.push(`• ${shortDate(localDate(new Date(note.created_at)), today)} · ${note.title}: ${note.details}`);
+    }
+    if (summary.notes_left_out > 0) lines.push(`${summary.notes_left_out} older notes aren't included.`);
+  }
+  lines.push('', "Put together by CareLoop from the family's records. It is not a diagnosis.");
+  return lines.join('\n');
+}
+
+/** The summary as sentences to read aloud, without the full notes. */
+export function summarySpeech(summary: VisitSummary, today: string = localDate()): string {
+  const parts = [`Health summary for ${summary.person_name}, from ${shortDate(summary.from_day, today)} to ${shortDate(summary.to_day, today)}.`];
+  for (const medicine of summary.medicines) parts.push(`${medicine.name}: ${describeDoseCounts(medicine.doses).split(' · ').join(', ')}.`);
+  for (const section of summarySections) {
+    const points = summary.points.filter((point) => point.section === section);
+    if (points.length > 0) parts.push(`${summarySectionTitle(section, summary.person_name)}: ${points.map((point) => point.text).join(' ')}`);
+  }
+  return parts.join(' ');
+}
+
+export function parseVisitSummary(value: unknown): VisitSummary {
+  const looksRight = isRecord(value) && typeof value.person_name === 'string' && typeof value.from_day === 'string' &&
+    typeof value.to_day === 'string' && Array.isArray(value.medicines) && Array.isArray(value.points) && Array.isArray(value.notes) &&
+    value.medicines.every((medicine) => isRecord(medicine) && typeof medicine.name === 'string' && Array.isArray(medicine.times)) &&
+    value.points.every((point) => isRecord(point) && summarySections.some((section) => section === point.section) &&
+      typeof point.text === 'string' && Array.isArray(point.note_ids));
+  if (!looksRight) throw new Error("Couldn't read the summary. Please try again.");
+  return value as VisitSummary;
+}
+
+export type AskKind = 'answer' | 'records' | 'dose_records' | 'not_found' | 'ask_doctor';
+export type RecordKind = 'note' | 'medicine' | 'dose' | 'appointment' | 'contact';
+export type AskSource = { kind: RecordKind; text: string };
+/**
+ * "records": the assistant's answer didn't pass the checks, so only the records it named are shown.
+ * "dose_records": whether doses were taken is shown exactly as recorded, never retold.
+ * "ask_doctor": it needs a doctor; `sources` then holds what the records say about it.
+ */
+export type AskResult = {
+  kind: AskKind;
+  answer: string | null;
+  sources: AskSource[];
+  urgent: boolean;
+  model: string;
+  checked_by: string | null; // the model that confirmed the answer against its records
+};
+const askKinds: AskKind[] = ['answer', 'records', 'dose_records', 'not_found', 'ask_doctor'];
+
+export function parseAskResult(value: unknown): AskResult {
+  const looksRight = isRecord(value) && askKinds.some((kind) => kind === value.kind) &&
+    (value.answer === null || typeof value.answer === 'string') && typeof value.urgent === 'boolean' && typeof value.model === 'string' &&
+    Array.isArray(value.sources) && value.sources.every((source) => isRecord(source) && typeof source.text === 'string' && typeof source.kind === 'string');
+  if (!looksRight) throw new Error("Couldn't read the answer. Please try again.");
+  return value as AskResult;
+}
+
+const urgentWords = new RegExp(
+  [
+    'chest (pain|hurts|is hurting|pressure|tightness)', 'pain in (the |her |his |my )?chest', 'heart attack', 'stroke',
+    "can'?t breath", 'cannot breath', 'not breathing', '(trouble|difficulty|problem) (in )?breathing', 'short(ness)? of breath', 'gasping',
+    'unconscious', 'unresponsive', 'not responding', "won'?t wake", 'not waking up', 'fainted', 'passed out', 'collapsed',
+    'seizure', 'choking', '(fell|fallen) (down|over|in|on|off|from|and)', "can'?t get up", 'hit (her|his|my) head',
+    'bleeding (a lot|heavily|badly)', 'heavy bleeding', 'overdose', 'double dose', 'too many (pills|tablets|medicines)',
+    '(took|swallowed|taken|had) (\\d{2,}|several|all (the|her|his|my))[^.?!]*(pills|tablets|capsules|medicine|doses)',
+    'suicid', 'kill (my|him|her)self', 'face (is )?drooping', 'slurred speech',
+    'सीने में दर्द', 'छाती में दर्द', 'सांस नहीं', 'साँस नहीं', 'बेहोश', 'गिर (गई|गया|गए|पड़ी|पड़ा|पड़े)',
+    'seene me(in)? dard', 'chhati me(in)? dard', 'saans nahi', 'behosh',
+  ].join('|'),
+  'i',
+);
+
+/** Words that may mean someone needs help right now. Checked on the phone, so the call buttons appear even offline. */
+export function soundsUrgent(text: string): boolean {
+  return urgentWords.test(text.replace(/[\u2018\u2019`]/g, "'")); // iPhones type curly apostrophes: can’t
 }
