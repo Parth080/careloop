@@ -1,16 +1,18 @@
 import { useState } from 'react';
-import { Alert, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Share, View } from 'react-native';
 
 import type { CareApi } from '../api';
-import { describeTime, errorMessage, roleLabel, type Circle, type Invite, type Member, type Role } from '../model';
-import { colors, ui } from '../theme';
-import { Button, Notice } from './controls';
+import { Button, Card, CloseButton, ModalScreen, Notice, ScreenHeader, Txt } from '../components/kit';
+import { describeTime, errorMessage, roleLabel, type Circle as CircleData, type Invite, type Member, type Role } from '../model';
+import { useTheme } from '../theme';
 
-type Props = { circle: Circle; api: CareApi; onChanged: () => void; onSignedOut: (notice: string) => void };
+type Props = { circle: CircleData; api: CareApi; onClose: () => void; onChanged: () => void; onSignedOut: (notice: string) => void };
 
 const cancel = { text: 'Cancel', style: 'cancel' as const };
 
-export default function CareCircle({ circle, api, onChanged, onSignedOut }: Props) {
+/** Who can see and add to the care record, inviting family, and leaving or deleting everything. */
+export default function Circle({ circle, api, onClose, onChanged, onSignedOut }: Props) {
+  const { s } = useTheme();
   const [invite, setInvite] = useState<Invite | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -80,77 +82,66 @@ export default function CareCircle({ circle, api, onChanged, onSignedOut }: Prop
   }
 
   function confirmDeleteEverything() {
-    Alert.alert(
-      `Delete all of ${whose} CareLoop data?`,
-      'Every note and contact is erased for everyone, and every phone is signed out. This cannot be undone.',
-      [
-        cancel,
-        {
-          text: 'Delete everything',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.deleteEverything();
-              onSignedOut('All CareLoop data was deleted.');
-            } catch (error) {
-              setMessage(errorMessage(error));
-            }
-          },
+    Alert.alert(`Delete all of ${whose} CareLoop data?`, 'Every note and contact is erased for everyone, and every phone is signed out. This cannot be undone.', [
+      cancel,
+      {
+        text: 'Delete everything',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api.deleteEverything();
+            onSignedOut('All CareLoop data was deleted.');
+          } catch (error) {
+            setMessage(errorMessage(error));
+          }
         },
-      ],
-    );
+      },
+    ]);
   }
 
   return (
-    <View style={ui.card}>
-      <Text style={ui.sectionTitle}>Care circle</Text>
-      <Text style={ui.helper}>People who can see and add to {whose} notes.</Text>
+    <ModalScreen onClose={onClose} header={<ScreenHeader title="Care circle" right={<CloseButton onPress={onClose} />} />}>
+      <Txt v="body" tone="textSecondary">
+        People who can see and add to {whose} notes, medicines and visits.
+      </Txt>
       {circle.members.map((member) => (
-        <View key={member.id} style={[ui.divider, styles.member]}>
-          <View style={styles.memberText}>
-            <Text style={styles.name}>
+        <Card key={member.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Txt v="title3">
               {member.name}
               {member.is_me ? ' (you)' : ''}
-            </Text>
-            <Text style={ui.small}>
+            </Txt>
+            <Txt v="bodySmall" tone="textMuted">
               {roleLabel(member.role)}
               {member.is_creator ? ' · set up CareLoop' : ''}
-            </Text>
+            </Txt>
           </View>
-          {member.can_remove && (
-            <Button label="Remove" variant="danger" accessibilityLabel={`Remove ${member.name}`} onPress={() => confirmRemove(member)} />
-          )}
-        </View>
+          {member.can_remove && <Button label="Remove" variant="quiet" accessibilityLabel={`Remove ${member.name}`} onPress={() => confirmRemove(member)} />}
+        </Card>
       ))}
-      <Button label="Invite a caregiver" variant="outline" disabled={busy} onPress={() => createInvite('caregiver')} />
+      <Button label="Invite a caregiver" icon="plus" variant="secondary" disabled={busy} onPress={() => createInvite('caregiver')} />
       {circle.can_manage && !hasCareRecipient && (
-        <Button label={`Add ${person}'s own phone`} variant="outline" disabled={busy} onPress={() => createInvite('care_recipient')} />
+        <Button label={`Add ${person}'s own phone`} icon="plus" variant="secondary" disabled={busy} onPress={() => createInvite('care_recipient')} />
       )}
       {invite && (
-        <View style={styles.invite}>
-          <Text style={ui.helper}>
+        <View style={[s.cardSoft, { gap: 12 }]}>
+          <Txt v="body" tone="onPrimarySoft">
             {invite.role === 'care_recipient' ? `On ${person}'s phone` : 'On their phone'}, open CareLoop, tap "I have an invite code" and enter:
-          </Text>
-          <Text selectable accessibilityLabel={`Invite code: ${invite.code.split('').join(' ')}`} style={styles.code}>
+          </Txt>
+          <Txt v="display" selectable accessibilityLabel={`Invite code: ${invite.code.split('').join(' ')}`} style={{ letterSpacing: 6, textAlign: 'center' }}>
             {invite.code}
-          </Text>
-          <Text style={ui.small}>Works once, until {describeTime(invite.expires_at)}.</Text>
-          <Button label="Share code" onPress={() => shareInvite(invite)} />
+          </Txt>
+          <Txt v="bodySmall" tone="onPrimarySoft">
+            Works once, until {describeTime(invite.expires_at)}.
+          </Txt>
+          <Button label="Share code" icon="share" onPress={() => shareInvite(invite)} />
         </View>
       )}
-      <Notice message={message} />
-      <View style={ui.divider}>
-        <Button label="Leave this care circle" variant="text" onPress={confirmLeave} />
-        {circle.can_manage && <Button label={`Delete all ${whose} data`} variant="danger" onPress={confirmDeleteEverything} />}
+      <Notice message={message} tone="warning" />
+      <View style={{ gap: 4, paddingTop: 12 }}>
+        <Button label="Leave this care circle" variant="quiet" onPress={confirmLeave} />
+        {circle.can_manage && <Button label={`Delete all ${whose} data`} icon="trash" variant="removal" onPress={confirmDeleteEverything} />}
       </View>
-    </View>
+    </ModalScreen>
   );
 }
-
-const styles = StyleSheet.create({
-  member: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  memberText: { flex: 1, gap: 2 },
-  name: { color: colors.heading, fontSize: 19, fontWeight: '800' },
-  invite: { backgroundColor: colors.notice, borderRadius: 14, padding: 16, gap: 10 },
-  code: { color: colors.heading, fontSize: 40, fontWeight: '900', letterSpacing: 4, textAlign: 'center' },
-});

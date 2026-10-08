@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { useFonts } from 'expo-font';
+import { AtkinsonHyperlegibleNext_400Regular } from '@expo-google-fonts/atkinson-hyperlegible-next/400Regular';
+import { AtkinsonHyperlegibleNext_600SemiBold } from '@expo-google-fonts/atkinson-hyperlegible-next/600SemiBold';
+import { AtkinsonHyperlegibleNext_700Bold } from '@expo-google-fonts/atkinson-hyperlegible-next/700Bold';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { clearSnapshot } from './src/cache';
 import type { Session } from './src/model';
@@ -8,9 +13,21 @@ import Home from './src/screens/Home';
 import { startReminders, stopReminders } from './src/reminders';
 import Onboarding from './src/screens/Onboarding';
 import { clearToken, loadToken, saveToken } from './src/session';
-import { colors, ui } from './src/theme';
+import { ThemeProvider, useTheme } from './src/theme';
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <CareLoop />
+      </ThemeProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function CareLoop() {
+  const { c, dark } = useTheme();
+  const [fontsLoaded, fontError] = useFonts({ AtkinsonHyperlegibleNext_400Regular, AtkinsonHyperlegibleNext_600SemiBold, AtkinsonHyperlegibleNext_700Bold });
   const [token, setToken] = useState<string | null | undefined>(undefined); // undefined while the keychain is read
   const [notice, setNotice] = useState<string>();
 
@@ -32,23 +49,20 @@ export default function App() {
     setToken(null);
   }, []);
 
+  // If the font can't load, the phone's own font is still readable, so carry on without it.
+  const ready = (fontsLoaded || !!fontError) && token !== undefined;
   return (
-    // Android draws edge-to-edge in SDK 57 and no longer resizes for the keyboard, so pad on both platforms.
-    <KeyboardAvoidingView style={styles.root} behavior="padding">
-      <StatusBar style="dark" />
-      {token === undefined ? (
-        <View style={ui.center}>
-          <ActivityIndicator size="large" color={colors.primary} />
+    <View style={{ flex: 1, backgroundColor: c.bg }}>
+      <StatusBar style={dark ? 'light' : 'dark'} />
+      {!ready ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={c.primary} />
         </View>
       ) : token ? (
         <Home token={token} onSignedOut={signOut} />
       ) : (
         <Onboarding notice={notice} onSignedIn={signIn} />
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.page },
-});

@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 Role = Literal["care_recipient", "caregiver"]
 Category = Literal["symptom", "appointment", "medication", "doctor", "general"]
-ContactRole = Literal["emergency", "doctor"]
+ContactRole = Literal["emergency", "doctor", "person"]  # "person": the older adult's own phone
 Name = Annotated[str, Field(min_length=1, max_length=80)]
 
 

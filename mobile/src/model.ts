@@ -11,7 +11,7 @@ export const categoryLabels: Record<Category, string> = {
 };
 
 export type Role = 'care_recipient' | 'caregiver';
-export type ContactRole = 'emergency' | 'doctor';
+export type ContactRole = 'emergency' | 'doctor' | 'person'; // 'person': the older adult's own phone
 
 export type Member = {
   id: number;
@@ -146,7 +146,8 @@ export function spokenMedicine(medicine: MedicineFields): string {
   const amount = medicine.dose ? `${medicine.dose} each time, ` : '';
   const when = medicine.as_needed ? 'only when needed' : `at ${medicine.times.map(formatClock).join(' and ')}`;
   const food = medicine.food ? `, ${foodLabels[medicine.food].toLowerCase()}` : '';
-  return `${medicine.name}${medicine.strength ? `, ${medicine.strength}` : ''}. ${amount}${when}${food}.`;
+  const directions = medicine.instructions ? ` ${medicine.instructions.replace(/\.?$/, '.')}` : '';
+  return `${medicine.name}${medicine.strength ? `, ${medicine.strength}` : ''}. ${amount}${when}${food}.${directions}`;
 }
 
 export function addDays(isoDate: string, days: number): string {
@@ -720,4 +721,161 @@ const urgentWords = new RegExp(
 /** Words that may mean someone needs help right now. Checked on the phone, so the call buttons appear even offline. */
 export function soundsUrgent(text: string): boolean {
   return urgentWords.test(text.replace(/[\u2018\u2019`]/g, "'")); // iPhones type curly apostrophes: can’t
+}
+
+/** "Good morning", "Good afternoon" or "Good evening". */
+export function greeting(now: Date = new Date()): string {
+  const hour = now.getHours();
+  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+/** "Thursday, 8 October", in the phone's language. */
+export function longDate(now: Date = new Date()): string {
+  return now.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+/** "this morning", "this afternoon" or "tonight" for a time today. */
+export function partOfDay(time: string): string {
+  const hour = Number(time.slice(0, 2));
+  return hour < 12 ? 'this morning' : hour < 17 ? 'this afternoon' : 'tonight';
+}
+
+export type TodayPlan = {
+  next: { dose: DoseTime; state: DoseState } | null; // the dose to act on now, or the next one coming
+  unmarked: DoseTime[]; // earlier doses nobody marked
+  done: DoseTime[]; // marked taken or skipped
+  tomorrow: DoseTime | null; // the first dose tomorrow, once today is done
+};
+
+/** How many of a dose's medicines nobody has marked yet. */
+export function unmarkedCount(dose: DoseTime, logs: DoseLog[]): number {
+  return dose.medicines.filter((medicine) => !logFor(logs, medicine.id, dose.day, dose.time)).length;
+}
+
+/**
+ * What the older adult's home shows: one dose to act on, earlier ones not fully marked, and those marked. A dose is
+ * done once every medicine in it is marked, even if some were taken and others skipped, and one still being
+ * finished takes the top spot only while it is due, so a later dose never gets stuck behind it.
+ */
+export function todayPlan(medicines: Medicine[], logs: DoseLog[], now: Date = new Date()): TodayPlan {
+  const today = localDate(now);
+  const doses = dosesOn(medicines, today);
+  const sinceDue = (dose: DoseTime) => now.getTime() - doseMoment(dose.day, dose.time).getTime();
+  const waiting = doses.filter((dose) => unmarkedCount(dose, logs) > 0);
+  const nextDose =
+    waiting.find((dose) => sinceDue(dose) >= 0 && sinceDue(dose) <= DUE_WINDOW_MS) ?? waiting.find((dose) => sinceDue(dose) < 0) ?? null;
+  return {
+    next: nextDose && { dose: nextDose, state: doseState(nextDose, logs, now) },
+    unmarked: waiting.filter((dose) => dose !== nextDose && sinceDue(dose) > DUE_WINDOW_MS),
+    done: doses.filter((dose) => unmarkedCount(dose, logs) === 0),
+    tomorrow: nextDose ? null : (dosesOn(medicines, addDays(today, 1))[0] ?? null),
+  };
+}
+
+export type DoseMark = 'taken' | 'skipped' | 'none';
+
+/** One mark per medicine dose due on a day, in time order: the segments of the caregiver's progress bar. */
+export function dayMarks(medicines: Medicine[], logs: DoseLog[], day: string): DoseMark[] {
+  return dosesOn(medicines, day).flatMap((dose) =>
+    dose.medicines.map((medicine) => logFor(logs, medicine.id, dose.day, dose.time)?.status ?? 'none'),
+  );
+}
+
+export function doseNames(dose: DoseTime): string {
+  return dose.medicines.map((medicine) => medicine.name).join(', ');
+}
+
+/** How to take a medicine at its time: "1 tablet, after food". Empty when neither is known. */
+export function doseDetail(medicine: MedicineFields): string {
+  return [medicine.dose, medicine.food ? foodLabels[medicine.food].toLowerCase() : null].filter(Boolean).join(', ');
+}
+
+/** "1 capsule · 8:00 AM · before food", or for "only when needed": "1 tablet · For pain, at most 3 a day". */
+export function medicineLine(medicine: MedicineFields): string {
+  if (medicine.as_needed) return [medicine.dose, medicine.instructions].filter(Boolean).join(' · ');
+  const food = medicine.food ? foodLabels[medicine.food].toLowerCase() : null;
+  return [medicine.dose, medicine.times.map(formatClock).join(', '), food].filter(Boolean).join(' · ');
+}
+
+/** "Until Sat, 24 Oct · added by Priya". */
+export function medicineMeta(medicine: Medicine, today: string = localDate()): string {
+  const period = isFinished(medicine, today)
+    ? `Finished ${formatDay(medicine.end_date!, today)}`
+    : medicine.start_date > today
+      ? `Starts ${formatDay(medicine.start_date, today)}`
+      : medicine.end_date
+        ? `Until ${formatDay(medicine.end_date, today)}`
+        : 'Ongoing';
+  return medicine.created_by_name ? `${period} · added by ${medicine.created_by_name}` : period;
+}
+
+const tileDays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+const tileMonths = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/** The calendar tile for a day: { weekday: 'TUE', day: '13', month: 'OCT' }. */
+export function dateTile(isoDate: string): { weekday: string; day: string; month: string } {
+  const day = parseDay(isoDate);
+  return { weekday: tileDays[day.getDay()], day: String(day.getDate()), month: tileMonths[day.getMonth()] };
+}
+
+/** "today", "tomorrow" or "in 5 days". */
+export function daysAway(isoDate: string, today: string = localDate()): string {
+  const days = daysBetween(today, isoDate);
+  return days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`;
+}
+
+export type RecordStatus = 'taken' | 'skipped' | 'not_marked' | 'not_due';
+
+/** The status a dose record states, for its badge. The record's own words are always shown too. */
+export function doseRecordStatus(text: string): RecordStatus | null {
+  if (/, taken \(marked/.test(text)) return 'taken';
+  if (/, skipped \(marked/.test(text)) return 'skipped';
+  if (/, not marked\.$/.test(text)) return 'not_marked';
+  if (/, not due yet\.$/.test(text)) return 'not_due';
+  return null;
+}
+
+/** An answer's first sentence, shown large, and the rest. */
+export function splitAnswer(answer: string): { lead: string; rest: string } {
+  for (const end of answer.matchAll(/[.!?।]\s+/g)) {
+    const lead = answer.slice(0, end.index + 1);
+    // "Dr. Mehta", "8 a.m. tomorrow" and a numbered list's "1." don't end a sentence.
+    if (/\b(Dr|Mr|Mrs|Ms|St|No|Tab|Cap)\.$|\b[ap]\.m\.$|(^|\n)\s*\d+\.$/i.test(lead)) continue;
+    return { lead, rest: answer.slice(end.index + end[0].length) };
+  }
+  return { lead: answer, rest: '' };
+}
+
+export function medicineCountLabel(counts: DoseCounts | null): string {
+  if (!counts) return 'only when needed';
+  if (counts.due === 0) return 'no doses due yet';
+  const parts = [`${counts.taken} of ${counts.due} taken`];
+  if (counts.skipped) parts.push(`${counts.skipped} skipped`);
+  if (counts.not_marked) parts.push(`${counts.not_marked} not marked`);
+  return parts.join(' · ');
+}
+
+/** A day for the middle of a sentence: "today", "tomorrow", or "Fri, 6 Nov". */
+export function dayInSentence(isoDate: string, today: string = localDate()): string {
+  const words = formatDay(isoDate, today);
+  return ['Today', 'Tomorrow', 'Yesterday'].includes(words) ? words.toLowerCase() : words;
+}
+
+/** "11:44 am": the time of day, in the phone's style. */
+export function clockTime(iso: string): string {
+  const moment = new Date(iso);
+  return Number.isNaN(moment.getTime()) ? '' : moment.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+/** "8 AM", or "8:30 AM": the short form for tight rows. */
+export function shortClock(time: string): string {
+  return formatClock(time).replace(':00 ', ' ');
+}
+
+/** Indian numbers in the groups people read them in: "+91 98123 45678", "98765 43210". Others as saved. */
+export function formatPhone(phone: string): string {
+  const india = phone.match(/^\+91(\d{5})(\d{5})$/);
+  if (india) return `+91 ${india[1]} ${india[2]}`;
+  const local = phone.match(/^(\d{5})(\d{5})$/);
+  return local ? `${local[1]} ${local[2]}` : phone;
 }

@@ -79,3 +79,7 @@ yarn-error.*
 
 # Submission assets (thumbnail, screenshots, video).
 /submission/
+
+# Design hand-off files (the tokens live in mobile/src/theme.tsx).
+/CareLoop Redesign*.pdf
+/careloop-theme.ts

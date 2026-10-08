@@ -1,15 +1,17 @@
 import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { Contact } from '../model';
 import { callNumber } from '../phone';
-import { Button, Notice } from './controls';
+import { useTheme } from '../theme';
+import { Button, Icon, Notice, Txt } from './kit';
 
 // India's emergency number. Most mobile networks elsewhere also connect it to local emergency services.
 const EMERGENCY_NUMBER = '112';
 
 /** Shown when words suggest someone may need help right now: one tap to call. */
 export default function UrgentHelp({ contacts }: { contacts: Contact[] }) {
+  const { c, s } = useTheme();
   const [message, setMessage] = useState('');
   const emergency = contacts.find((contact) => contact.role === 'emergency');
 
@@ -18,16 +20,16 @@ export default function UrgentHelp({ contacts }: { contacts: Contact[] }) {
   }
 
   return (
-    <View accessibilityRole="alert" style={styles.box}>
-      <Text style={styles.title}>If this is an emergency, get help now.</Text>
-      {emergency && <Button label={`☎  Call ${emergency.name}`} variant="emergency" onPress={() => void call(emergency.phone)} />}
-      <Button label={`☎  Call ${EMERGENCY_NUMBER} (emergency services)`} variant="emergency" onPress={() => void call(EMERGENCY_NUMBER)} />
-      <Notice message={message} />
+    <View accessibilityRole="alert" style={s.emergencyBox}>
+      <View style={{ flexDirection: 'row', gap: 12 }}>
+        <Icon name="alert" size={30} color={c.onDangerSoft} />
+        <Txt v="title3" tone="onDangerSoft" style={{ flex: 1 }}>
+          If this is an emergency, get help now.
+        </Txt>
+      </View>
+      {emergency && <Button label={`Call ${emergency.name}`} icon="phone" variant="danger" onPress={() => void call(emergency.phone)} />}
+      <Button label={`Call ${EMERGENCY_NUMBER} · emergency services`} icon="phone" variant="danger" onPress={() => void call(EMERGENCY_NUMBER)} />
+      <Notice message={message} tone="danger" />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  box: { backgroundColor: '#FBE1DC', borderRadius: 14, padding: 14, gap: 10, borderWidth: 1, borderColor: '#E3A99F' },
-  title: { color: '#7A2418', fontSize: 18, fontWeight: '800' },
-});

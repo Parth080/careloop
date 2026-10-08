@@ -26,6 +26,8 @@ def test_invalid_contacts_are_rejected(client):
         assert response.status_code == 422, phone
     valid = {"name": "Neighbour", "phone": "9876543210"}
     assert client.put("/api/contacts/neighbour", json=valid, headers=auth(asha["token"])).status_code == 422
+    own = {"name": "Asha", "phone": "9812300000"}  # the older adult's own phone, for the caregivers' "Call Asha"
+    assert client.put("/api/contacts/person", json=own, headers=auth(asha["token"])).status_code == 200
 
 
 def test_removing_a_contact(client):

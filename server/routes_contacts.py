@@ -1,4 +1,4 @@
-"""The emergency contact and the doctor, shared by everyone in the care circle."""
+"""The emergency contact, the doctor and the older adult's own phone, shared by everyone in the care circle."""
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import delete, select

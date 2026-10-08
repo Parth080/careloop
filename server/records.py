@@ -197,7 +197,8 @@ def care_records(db: Session, me: Member, now: datetime) -> list[Record]:
         records.append(Record(f"{prefix}{sum(record.kind == kind for record in records) + 1}", kind, text))
 
     for contact in db.scalars(select(TrustedContact).where(TrustedContact.profile_id == me.profile_id).order_by(TrustedContact.role)):
-        add("C", "contact", f"{'Emergency contact' if contact.role == 'emergency' else 'Doctor'}: {contact.name}, phone {contact.phone}")
+        who = {"emergency": "Emergency contact", "doctor": "Doctor"}.get(contact.role, f"{me.profile.person_name}'s own phone")
+        add("C", "contact", f"{who}: {contact.name}, phone {contact.phone}")
 
     first = today - timedelta(days=DOSE_COUNT_DAYS - 1)
     logs = logs_by_medicine(dose_logs_between(db, me.profile_id, first, today))
