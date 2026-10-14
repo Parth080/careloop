@@ -28,6 +28,7 @@ class FakeAI:
     def __init__(self) -> None:
         self.replies: list[Any] = []
         self.by_model: dict[str, list[Any]] = {}
+        self.by_prompt: list[tuple[str, str | None, Any]] = []
         self.requests: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
@@ -45,6 +46,11 @@ class FakeAI:
     def reply_with_text(self, text: str, finish_reason: str = "stop", model: str | None = None) -> None:
         self._queue(model).append(completion([], content=text, finish_reason=finish_reason))
 
+    def reply_when(self, prompt_part: str, text: str, model: str | None = None) -> None:
+        """Reply with text to the next request whose prompt contains prompt_part (sent to model, if given): for
+        calls that run at the same time as others to the same model."""
+        self.by_prompt.append((prompt_part, model, completion([], content=text)))
+
     def reply_without_tool(self) -> None:
         self.replies.append(completion([]))
 
@@ -55,10 +61,20 @@ class FakeAI:
         return [request for request in self.requests if request["model"] == model]
 
     def _create(self, **request: Any) -> Any:
+        content = request["messages"][-1]["content"]
+        prompt = content if isinstance(content, str) else " ".join(part.get("text", "") for part in content)
         with self._lock:
             self.requests.append(request)
-            own = self.by_model.get(request["model"])
-            reply = (own if own else self.replies).pop(0)
+            matching = [
+                index
+                for index, (part, model, _) in enumerate(self.by_prompt)
+                if part in prompt and model in (None, request["model"])
+            ]
+            if matching:
+                reply = self.by_prompt.pop(matching[0])[2]
+            else:
+                own = self.by_model.get(request["model"])
+                reply = (own if own else self.replies).pop(0)
         if isinstance(reply, Exception):
             raise reply
         return reply

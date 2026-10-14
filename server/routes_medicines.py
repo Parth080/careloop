@@ -79,8 +79,8 @@ def read_prescription_photo(
     db.close()  # reading takes several seconds; don't hold a database connection meanwhile
     try:
         with friendly_ai_errors("Couldn't make sense of this prescription. Try a sharper photo, or add the medicines by hand."):
-            readings = read_prescription(client, image_base64, body.media_type)
-            draft = organize_prescription(client, readings)
+            readings, lines = read_prescription(client, image_base64, body.media_type)
+            draft = organize_prescription(client, readings, lines)
     except WrongPhoto as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     # The photo itself is never stored: only medicines that someone confirms are saved.

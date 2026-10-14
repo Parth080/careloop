@@ -11,9 +11,11 @@ import {
   formFromDraft,
   formFromMedicine,
   isFinished,
+  lineArea,
   localDate,
   medicineProblem,
   applyPackage,
+  orList,
   parsePackageReading,
   parsePrescriptionReading,
   toMedicineInput,
@@ -108,6 +110,25 @@ test('parsePrescriptionReading rejects malformed answers', () => {
   for (const bad of [null, { ...reading, medicines: 'x' }, { ...reading, medicines: [{ name: 'x' }] }, { ...reading, readings: [] }, { ...reading, readings: [{ model: 'q' }] }]) {
     assert.throws(() => parsePrescriptionReading(bad), /answer/);
   }
+});
+
+test("each medicine keeps where its line is on the photo, if the server found it", () => {
+  const reading = { medicines: [draft], other_instructions: [], readings: [{ model: 'q', text: 'Rx' }], organizing_model: 'n' };
+  const found = { ...draft, box: [50, 420, 860, 580], usual_strengths: ['500 mg', 850, '1000 mg'] };
+  const [medicine] = parsePrescriptionReading({ ...reading, medicines: [found] }).medicines;
+  assert.deepEqual(medicine.box, [50, 420, 860, 580]);
+  assert.deepEqual(medicine.usual_strengths, ['500 mg', '1000 mg']);
+  for (const box of [undefined, null, [1, 2, 3], [0, 0, 2000, 10], [500, 10, 100, 20]]) {
+    assert.equal(parsePrescriptionReading({ ...reading, medicines: [{ ...draft, box }] }).medicines[0].box, null);
+  }
+  assert.deepEqual(parsePrescriptionReading(reading).medicines[0].usual_strengths, []); // an older server
+  assert.equal('box' in formFromDraft(medicine, '2026-10-05'), false);
+
+  const area = lineArea([50, 420, 860, 580]);
+  assert.deepEqual(Object.values(area).map((value) => Math.round(value * 1000)), [20, 372, 870, 256]);
+  assert.deepEqual(lineArea([0, 0, 1000, 1000]), { left: 0, top: 0, width: 1, height: 1 }); // never off the photo
+  assert.equal(orList(['20 mg', '40 mg', '80 mg']), '20 mg, 40 mg or 80 mg');
+  assert.equal(orList(['40 mg']), '40 mg');
 });
 
 test('a medicine package fills the name and clears the handwriting warnings', () => {

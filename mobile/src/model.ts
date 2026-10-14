@@ -55,8 +55,15 @@ export type MedicineFields = {
   instructions: string | null;
   source_text: string | null;
 };
-/** `alternatives`: other spellings of the name that the two readers saw. */
-export type MedicineDraft = MedicineFields & { duration_days: number | null; unclear: MedicineField[]; alternatives: string[] };
+/** `alternatives`: other spellings the readers saw, and real medicines with names like them. `usual_strengths`: what the
+ * medicine is usually sold as. `box`: where its line is on the photo, as [x1, y1, x2, y2] from 0 to 1000. */
+export type MedicineDraft = MedicineFields & {
+  duration_days: number | null;
+  unclear: MedicineField[];
+  alternatives: string[];
+  usual_strengths: string[];
+  box: number[] | null;
+};
 export type Reading = { model: string; text: string };
 export type PrescriptionReading = {
   medicines: MedicineDraft[];
@@ -87,6 +94,7 @@ export type MedicineForm = MedicineFields & {
   duration_days: number | null;
   unclear: MedicineField[];
   alternatives: string[];
+  usual_strengths: string[];
 };
 
 export const timeSlots = [
@@ -124,6 +132,7 @@ export function emptyMedicineForm(today: string = localDate()): MedicineForm {
     duration_days: null,
     unclear: [],
     alternatives: [],
+    usual_strengths: [],
   };
 }
 
@@ -195,12 +204,13 @@ export function isFinished(medicine: Pick<MedicineInput, 'end_date'>, today: str
 }
 
 export function formFromDraft(draft: MedicineDraft, today: string = localDate()): MedicineForm {
-  return { ...draft, start_date: today };
+  const { box: _box, ...fields } = draft;
+  return { ...fields, start_date: today };
 }
 
 export function formFromMedicine(medicine: Medicine): MedicineForm {
   const { id: _id, created_at: _c, created_by_name: _cb, updated_at: _u, updated_by_name: _ub, end_date, ...fields } = medicine;
-  return { ...fields, duration_days: end_date ? daysBetween(medicine.start_date, end_date) + 1 : null, unclear: [], alternatives: [] };
+  return { ...fields, duration_days: end_date ? daysBetween(medicine.start_date, end_date) + 1 : null, unclear: [], alternatives: [], usual_strengths: [] };
 }
 
 export function medicineProblem(form: MedicineForm): string | null {
@@ -240,7 +250,20 @@ export function parsePrescriptionReading(value: unknown): PrescriptionReading {
     value.medicines.every((medicine) => isRecord(medicine) && typeof medicine.name === 'string' && Array.isArray(medicine.times) &&
       Array.isArray(medicine.unclear) && Array.isArray(medicine.alternatives) && typeof medicine.as_needed === 'boolean');
   if (!looksRight) throw new Error("Couldn't read the assistant's answer. Please try again.");
-  return value as PrescriptionReading;
+  const reading = value as PrescriptionReading;
+  return {
+    ...reading,
+    medicines: reading.medicines.map((medicine) => ({
+      ...medicine,
+      usual_strengths: Array.isArray(medicine.usual_strengths) ? medicine.usual_strengths.filter((item) => typeof item === 'string') : [],
+      box: isBox(medicine.box) ? medicine.box : null,
+    })),
+  };
+}
+
+function isBox(value: unknown): value is number[] {
+  return Array.isArray(value) && value.length === 4 && value.every((item) => typeof item === 'number' && item >= 0 && item <= 1000) &&
+    value[2] > value[0] && value[3] > value[1];
 }
 
 export function parsePackageReading(value: unknown): PackageReading {
@@ -249,6 +272,21 @@ export function parsePackageReading(value: unknown): PackageReading {
     isReading(value.reading) && typeof value.organizing_model === 'string';
   if (!looksRight) throw new Error("Couldn't read the assistant's answer. Please try again.");
   return value as PackageReading;
+}
+
+/** The part of the photo that shows a medicine's line, with a little room around it, as fractions of the photo.
+ * The same area the readers were shown enlarged. */
+export function lineArea(box: number[]): { left: number; top: number; width: number; height: number } {
+  const [x1, y1, x2, y2] = box.map((value) => value / 1000);
+  const room = Math.max((y2 - y1) * 0.3, 0.02);
+  const left = Math.max(0, x1 - 0.03);
+  const top = Math.max(0, y1 - room);
+  return { left, top, width: Math.min(1, x2 + 0.03) - left, height: Math.min(1, y2 + room) - top };
+}
+
+/** "20 mg, 40 mg or 80 mg". */
+export function orList(items: string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
 }
 
 /** Fill a medicine from its package: printed text beats handwriting, so those warnings are cleared. */
@@ -261,6 +299,7 @@ export function applyPackage(form: MedicineForm, found: PackageReading): Medicin
     form: found.form ?? form.form,
     unclear: form.unclear.filter((field) => !(found.name && replaced.includes(field))),
     alternatives: found.name ? [] : form.alternatives,
+    usual_strengths: found.name ? [] : form.usual_strengths,
   };
 }
 

@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
-export type Photo = { uri: string; base64: string };
+export type Photo = { uri: string; base64: string; width: number; height: number };
 
 const LONGEST_SIDE = 2000; // sharp enough for handwriting, small enough to upload quickly
 
@@ -25,5 +25,5 @@ export async function getPhoto(source: 'camera' | 'library'): Promise<Photo | nu
   const image = await context.renderAsync();
   const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: 0.8, base64: true });
   if (!saved.base64) throw new Error("Couldn't prepare the photo. Please try again.");
-  return { uri: saved.uri, base64: saved.base64 };
+  return { uri: saved.uri, base64: saved.base64, width: saved.width, height: saved.height };
 }

@@ -11,6 +11,7 @@ import {
   formatClock,
   formatDay,
   localDate,
+  orList,
   parseDay,
   timeSlots,
   type FoodTiming,
@@ -100,7 +101,7 @@ export default function MedicineFields({ value, onChange, api }: Props) {
         {value.alternatives.length > 0 && (
           <>
             <Txt v="bodySmall" tone="onWarning">
-              The two readers saw different spellings. Tap one to use it, if it matches the photo:
+              Other possible names. Tap one if it matches the photo:
             </Txt>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {value.alternatives.map((spelling) => (
@@ -109,21 +110,40 @@ export default function MedicineFields({ value, onChange, api }: Props) {
             </View>
           </>
         )}
+        {api && unsure('name') && (
+          <Txt v="body" tone="textSecondary">
+            Handwriting is hard to read. A photo of the medicine's strip or box is the surest way to get the name right.
+          </Txt>
+        )}
         {api && (
-          <Button label={scanning ? 'Reading the package…' : 'Read the name from the strip'} icon="camera" variant="secondary" disabled={scanning} onPress={chooseSource} />
+          <Button
+            label={scanning ? 'Reading the package…' : unsure('name') ? 'Photograph the strip or box' : 'Read the name from the strip'}
+            icon="camera"
+            variant={unsure('name') ? 'primary' : 'secondary'}
+            disabled={scanning}
+            onPress={chooseSource}
+          />
         )}
         {!!fromPackage && <Notice tone="success" icon="check" message={`From the package: ${fromPackage}`} />}
         <Notice tone="warning" message={scanMessage} />
       </View>
 
-      <Field
-        label="Strength"
-        warn={unsure('strength')}
-        maxLength={60}
-        placeholder="For example: 5 mg"
-        value={value.strength ?? ''}
-        onChangeText={(strength) => fix('strength', { strength })}
-      />
+      <View style={{ gap: 8 }}>
+        <Field
+          label="Strength"
+          warn={unsure('strength')}
+          maxLength={60}
+          placeholder="For example: 5 mg"
+          value={value.strength ?? ''}
+          onChangeText={(strength) => fix('strength', { strength })}
+        />
+        {/* Only to catch a misread number (400 for 40), never to suggest a strength that isn't written. */}
+        {unsure('strength') && !!value.strength?.trim() && value.usual_strengths.length > 0 && (
+          <Txt v="bodySmall" tone="onWarning">
+            {value.name.trim() || 'This medicine'} usually comes as {orList(value.usual_strengths)}.
+          </Txt>
+        )}
+      </View>
       <View style={{ flexDirection: 'row', gap: 12 }}>
         <View style={{ flex: 1 }}>
           <Field label="Type" warn={unsure('form')} maxLength={40} placeholder="tablet" value={value.form ?? ''} onChangeText={(form) => fix('form', { form })} />

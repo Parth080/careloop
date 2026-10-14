@@ -1,7 +1,10 @@
 import base64
+import io
+import json
 
 import httpx
 from openai import InternalServerError
+from PIL import Image
 from sqlalchemy import func, select
 
 from server import ai
@@ -12,6 +15,14 @@ from .helpers import auth, invite_and_join, new_profile
 # Tiny stand-ins with real file signatures; the fake model never looks inside.
 JPEG = base64.b64encode(b"\xff\xd8\xff\xe0" + b"\x00" * 200).decode()
 PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 200).decode()
+
+
+def photo() -> str:
+    """A real (blank) photo, so lines can be cut out of it."""
+    buffer = io.BytesIO()
+    Image.new("RGB", (1000, 800), "white").save(buffer, "JPEG")
+    return base64.b64encode(buffer.getvalue()).decode()
+
 
 TRANSCRIPTION = (
     "Dr. R. Mehta\n1. Tab. Amlodipine 5 mg 1-0-0 x 30 days after breakfast\n2. Tab. Metformin 500 mg 1-0-1 x 30 days"
@@ -115,6 +126,20 @@ def test_a_name_only_one_reader_saw_is_offered_not_filled_in(client, fake_ai):
     assert "name" in medicine["unclear"]
 
 
+def test_suggested_names_must_look_like_what_every_reader_saw(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai, "Tab Glycomct 500 BD", "Tab Glycomet 500 BD")
+    unclear_line = {"name": "", "alternatives": ["Glycomct", "Glycomet", "Glycinorm", "Glyciphage"]}
+    other_line = {"name": "", "alternatives": ["Oreo", "Brevo"]}
+    both_read_other = {"medicines": [unclear_line, other_line]}
+    fake_ai.reply_with_tool("draft_medicines", both_read_other)
+
+    first, second = read(client, asha["token"]).json()["medicines"]
+
+    assert first["alternatives"] == ["Glycomct", "Glycomet"]  # what the readers wrote; the other two don't look like it
+    assert second["alternatives"] == []  # names nobody read are never offered
+
+
 def test_a_misspelling_the_model_fixed_is_kept_but_flagged(client, fake_ai):
     asha = new_profile(client)
     both_read(fake_ai, "Tablet Metformis 500 Twice", "Tablet Metformis 500 Twice")
@@ -134,6 +159,102 @@ def test_a_strength_the_readers_disagree_on_is_flagged(client, fake_ai):
     fake_ai.reply_with_tool("draft_medicines", {"medicines": [{"name": "Telma", "strength": "40 mg", "times": ["08:00"]}]})
 
     assert read(client, asha["token"]).json()["medicines"][0]["unclear"] == ["strength"]
+
+
+def test_a_strength_the_medicine_isnt_sold_in_is_flagged(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai, "Tab Telma 400 1-0-0", "Tab Telma 400 1-0-0")
+    drafted = {"name": "Telma", "strength": "400 mg", "times": ["08:00"], "usual_strengths": ["20 mg", "40 mg", "80 mg"]}
+    fake_ai.reply_with_tool("draft_medicines", {"medicines": [drafted]})
+
+    medicine = read(client, asha["token"]).json()["medicines"][0]
+
+    assert medicine["unclear"] == ["strength"]  # both readers agree, but Telma isn't sold as 400 mg
+    assert medicine["usual_strengths"] == ["20 mg", "40 mg", "80 mg"]
+
+
+def test_the_written_shorthand_is_held_against_the_draft(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai, "Tabs Calcium Sandoz 1 OD x 10/7")
+    drafted = {"name": "Calcium Sandoz", "times": ["08:00", "21:00"], "source_text": "Tabs Calcium Sandoz 1 OD x 10/7"}
+    fake_ai.reply_with_tool("draft_medicines", {"medicines": [drafted]})
+
+    medicine = read(client, asha["token"]).json()["medicines"][0]
+
+    assert medicine["times"] == ["08:00", "21:00"]  # OD is once a day: the draft disagrees, so a person checks
+    assert medicine["duration_days"] == 10  # "x 10/7" is 10 days
+    assert set(medicine["unclear"]) == {"times", "duration"}
+
+
+def asked(fake_ai, prompt_part):
+    """The photo requests whose prompt contains prompt_part."""
+    return [
+        request
+        for request in fake_ai.requests
+        if isinstance(request["messages"][0]["content"], list) and prompt_part in request["messages"][0]["content"][0]["text"]
+    ]
+
+
+def find_lines(fake_ai, *boxes):
+    fake_ai.reply_when("Find every medicine", json.dumps([{"box": box, "text": "..."} for box in boxes]), model=QWEN)
+
+
+def test_each_medicine_line_is_cut_out_enlarged_and_read_again(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai, "1) Tabs Calearon Sandoz 1 1-0-1 x 10/5", "1) Tabs Calcium Sandoz 1 1-0-1 x 10/5")
+    find_lines(fake_ai, [50, 420, 860, 580])
+    fake_ai.reply_when("cut out and enlarged", "Tabs Calcium Sandoz 1 OD x 10/7", model=QWEN)
+    fake_ai.reply_when("cut out and enlarged", "Based on the image provided, here is the line:\n\n**Tabs Calcium Sandoz 1 OD x 10/7**", model=GEMMA)
+    drafted = {"name": "Calcium Sandoz", "times": ["08:00", "21:00"], "line": 1, "source_text": "Tabs Calcium Sandoz 1 OD x 10/7"}
+    fake_ai.reply_with_tool("draft_medicines", {"medicines": [drafted]})
+
+    response = read(client, asha["token"], image=photo())
+
+    assert response.status_code == 200, response.text
+    medicine = response.json()["medicines"][0]
+    assert medicine["name"] == "Calcium Sandoz"
+    assert medicine["box"] == [50, 420, 860, 580]  # so the app can show the line next to the medicine
+    assert medicine["times"] == ["08:00"]  # both enlarged readings say OD
+    assert medicine["duration_days"] == 10
+    assert medicine["unclear"] == []  # each reader read the name on the enlarged line
+    enlarged = asked(fake_ai, "cut out and enlarged")
+    assert {request["model"] for request in enlarged} == {QWEN, GEMMA}
+    assert enlarged[0]["messages"][0]["content"][1]["image_url"]["url"] != f"data:image/jpeg;base64,{photo()}"
+    (organize,) = fake_ai.calls_to(ai.prescription_model())
+    assert organize["messages"][-1]["content"].endswith(
+        "Enlarged lines:\n\nLine 1:\nA: Tabs Calcium Sandoz 1 OD x 10/7\nB: Tabs Calcium Sandoz 1 OD x 10/7"
+    )  # the readers' preamble and formatting are dropped
+
+
+def test_if_no_lines_are_found_the_whole_page_is_used(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai)
+    fake_ai.reply_when("Find every medicine", "I can't see any boxes.", model=QWEN)
+    fake_ai.reply_with_tool("draft_medicines", {"medicines": [AMLODIPINE], "other_instructions": []})
+
+    response = read(client, asha["token"], image=photo())
+
+    assert response.status_code == 200
+    assert response.json()["medicines"][0]["box"] is None
+    (organize,) = fake_ai.calls_to(ai.prescription_model())
+    assert "Enlarged lines" not in organize["messages"][-1]["content"]
+
+
+def test_a_name_one_reader_saw_even_enlarged_is_offered_not_filled_in(client, fake_ai):
+    asha = new_profile(client)
+    both_read(fake_ai, "R Tramadol 100 mg 1-0-1", "R [unclear] 100 mg 1-0-1")
+    find_lines(fake_ai, [100, 300, 900, 400])
+    fake_ai.reply_when("cut out and enlarged", "R Tramadol 100 mg 1-0-1", model=QWEN)
+    fake_ai.reply_when("cut out and enlarged", "R [unclear] 100 mg 1-0-1", model=GEMMA)
+    fake_ai.reply_with_tool("draft_medicines", {"medicines": [{"name": "Tramadol", "strength": "100 mg", "line": 1}]})
+
+    medicine = read(client, asha["token"], image=photo()).json()["medicines"][0]
+
+    # Readers asked to pick from a list chose a real-looking name even on lines they couldn't read (Amoxicilina for
+    # Fenobarbital), so a doubtful name is left for the person to pick.
+    assert medicine["name"] == ""
+    assert medicine["alternatives"] == ["Tramadol"]
+    assert "name" in medicine["unclear"]
 
 
 def test_a_failed_reader_is_replaced_by_the_spare(client, fake_ai):

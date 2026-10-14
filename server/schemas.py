@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 Role = Literal["care_recipient", "caregiver"]
 Category = Literal["symptom", "appointment", "medication", "doctor", "general"]
@@ -215,7 +216,13 @@ class MedicineDraft(MedicineFields):
     name: str = Field(default="", max_length=120)  # empty when it couldn't be read: the person fills it in
     duration_days: int | None = None
     unclear: list[MedicineField] = Field(default_factory=list)
-    alternatives: list[str] = Field(default_factory=list, description="Other spellings of this medicine's name seen in the readings")
+    alternatives: list[str] = Field(
+        default_factory=list, description="Other spellings of the name seen in the readings, and real medicines whose names match them"
+    )
+    line: int | None = Field(default=None, description="The number of the enlarged line this medicine is on")
+    usual_strengths: list[str] = Field(default_factory=list, description="The strengths this medicine is usually sold in")
+    # Where the medicine's line is on the photo, as [x1, y1, x2, y2] from 0 to 1000; set by the server, not the model.
+    box: SkipJsonSchema[list[int] | None] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -256,6 +263,12 @@ class MedicineDraft(MedicineFields):
         draft["unclear"] = list(dict.fromkeys(flags))
         spellings = draft.get("alternatives") if isinstance(draft.get("alternatives"), list) else []
         draft["alternatives"] = list(dict.fromkeys(str(item).strip()[:120] for item in spellings if str(item).strip()))[:4]
+        strengths = draft.get("usual_strengths") if isinstance(draft.get("usual_strengths"), list) else []
+        draft["usual_strengths"] = list(dict.fromkeys(str(item).strip()[:30] for item in strengths if str(item).strip()))[:6]
+        line = draft.get("line")
+        draft["line"] = line if isinstance(line, int) and not isinstance(line, bool) else None
+        box = draft.get("box")
+        draft["box"] = box if isinstance(box, list) and len(box) == 4 and all(type(value) is int for value in box) else None
         return draft
 
 

@@ -8,6 +8,7 @@ import MedicineFields from '../components/MedicineFields';
 import {
   errorMessage,
   formFromDraft,
+  lineArea,
   localDate,
   medicineProblem,
   modelLabel,
@@ -18,7 +19,7 @@ import {
 import type { Photo } from '../photos';
 import { radius, useTheme } from '../theme';
 
-type Item = { form: MedicineForm; keep: boolean; checked: boolean };
+type Item = { form: MedicineForm; keep: boolean; checked: boolean; box: number[] | null };
 type Props = { api: CareApi; photo: Photo; onClose: () => void; onSaved: () => void; onDone: (message: string) => void };
 
 /** Reading a prescription photo, then checking each medicine against it, one at a time. */
@@ -40,7 +41,7 @@ export default function PrescriptionCheck({ api, photo, onClose, onSaved, onDone
       .then((result) => {
         if (!current) return;
         setReading(result);
-        setItems(result.medicines.map((medicine) => ({ form: formFromDraft(medicine, localDate()), keep: true, checked: false })));
+        setItems(result.medicines.map((medicine) => ({ form: formFromDraft(medicine, localDate()), keep: true, checked: false, box: medicine.box })));
       })
       .catch((error) => current && setProblem(errorMessage(error)));
     return () => {
@@ -124,7 +125,7 @@ export default function PrescriptionCheck({ api, photo, onClose, onSaved, onDone
           <View style={{ alignItems: 'center', gap: 12, paddingVertical: 12 }}>
             <ActivityIndicator size="large" color={c.primary} />
             <Txt v="bodyLarge" style={{ textAlign: 'center' }}>
-              Two AI readers are reading the photo. This usually takes under 20 seconds.
+              Two AI readers are reading the photo, then each medicine line up close. This usually takes under 30 seconds.
             </Txt>
           </View>
         )}
@@ -162,22 +163,33 @@ export default function PrescriptionCheck({ api, photo, onClose, onSaved, onDone
 
   return (
     <ModalScreen onClose={onClose} header={header} footer={footer} scrollKey={step}>
-      <View style={[s.card, { flexDirection: 'row', gap: 14, padding: 14 }]}>
-        <Pressable accessibilityRole="imagebutton" accessibilityLabel="Prescription photo. Tap to enlarge." onPress={() => setEnlarged(true)}>
-          <Image source={{ uri: photo.uri }} style={{ width: 76, height: 96, borderRadius: radius.sm, backgroundColor: c.surfaceSunken }} resizeMode="cover" />
-        </Pressable>
-        <View style={{ flex: 1, gap: 4 }}>
+      {item.box ? (
+        <View style={[s.card, { gap: 10, padding: 14 }]}>
           <Txt v="bodySmall" tone="textMuted">
             On the prescription
           </Txt>
-          <Txt v="headline">{item.form.source_text ? `"${item.form.source_text}"` : 'This line was hard to read.'}</Txt>
-          <Button label="Tap to enlarge photo" variant="quiet" onPress={() => setEnlarged(true)} style={{ paddingHorizontal: 0, alignSelf: 'flex-start' }} />
+          <LineOfPhoto photo={photo} box={item.box} onPress={() => setEnlarged(true)} />
+          {!!item.form.source_text && <Txt v="headline">Read as: "{item.form.source_text}"</Txt>}
+          <Button label="See the whole photo" variant="quiet" onPress={() => setEnlarged(true)} style={{ paddingHorizontal: 0, alignSelf: 'flex-start' }} />
         </View>
-      </View>
+      ) : (
+        <View style={[s.card, { flexDirection: 'row', gap: 14, padding: 14 }]}>
+          <Pressable accessibilityRole="imagebutton" accessibilityLabel="Prescription photo. Tap to enlarge." onPress={() => setEnlarged(true)}>
+            <Image source={{ uri: photo.uri }} style={{ width: 76, height: 96, borderRadius: radius.sm, backgroundColor: c.surfaceSunken }} resizeMode="cover" />
+          </Pressable>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Txt v="bodySmall" tone="textMuted">
+              On the prescription
+            </Txt>
+            <Txt v="headline">{item.form.source_text ? `"${item.form.source_text}"` : 'This line was hard to read.'}</Txt>
+            <Button label="Tap to enlarge photo" variant="quiet" onPress={() => setEnlarged(true)} style={{ paddingHorizontal: 0, alignSelf: 'flex-start' }} />
+          </View>
+        </View>
+      )}
       <View style={{ flexDirection: 'row', gap: 10 }}>
         <Icon name="alert" color={c.onWarning} />
         <Txt v="body" tone="textSecondary" style={{ flex: 1 }}>
-          Two AI readers read the photo. Anything they disagreed on or couldn't read is marked ⚠.
+          Two AI readers read the photo, then each line again up close. Anything they disagreed on or couldn't read is marked ⚠.
         </Txt>
       </View>
       <View style={[s.card, { paddingVertical: 4 }]}>
@@ -230,6 +242,54 @@ function ReadingExtras({ reading, adviceSaved, onSaveAdvice }: { reading: Prescr
         Read by {reading.readings.map((one) => modelLabel(one.model)).join(' and ')} and organized by {modelLabel(reading.organizing_model)} on Nebius. The photo is not stored.
       </Txt>
     </>
+  );
+}
+
+const LINE_HEIGHT = 110; // tall enough to make out handwriting; a long line scrolls sideways
+
+/** Just the medicine's line, cut from the photo and enlarged: what the readers looked at up close. */
+function LineOfPhoto({ photo, box, onPress }: { photo: Photo; box: number[]; onPress: () => void }) {
+  const { c } = useTheme();
+  const [width, setWidth] = useState(0);
+  const area = lineArea(box);
+  const scale = Math.max(width / (area.width * photo.width), LINE_HEIGHT / (area.height * photo.height));
+  const shownWidth = area.width * photo.width * scale;
+  const height = Math.min(area.height * photo.height * scale, 180);
+  const scrolls = shownWidth > width + 4;
+  return (
+    <View style={{ gap: 6 }}>
+      <View
+        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+        style={{ height: width ? height : LINE_HEIGHT, overflow: 'hidden', borderRadius: radius.sm, backgroundColor: c.surfaceSunken }}
+      >
+        {width > 0 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={scrolls}>
+            <Pressable
+              accessibilityRole="imagebutton"
+              accessibilityLabel="This medicine's line on the prescription. Tap to see the whole photo."
+              onPress={onPress}
+              style={{ width: shownWidth, height, overflow: 'hidden' }}
+            >
+              <Image
+                source={{ uri: photo.uri }}
+                style={{
+                  position: 'absolute',
+                  width: photo.width * scale,
+                  height: photo.height * scale,
+                  left: -area.left * photo.width * scale,
+                  top: -area.top * photo.height * scale,
+                }}
+              />
+            </Pressable>
+          </ScrollView>
+        )}
+      </View>
+      {scrolls && (
+        <Txt v="bodySmall" tone="textMuted">
+          Swipe along the line to see all of it.
+        </Txt>
+      )}
+    </View>
   );
 }
 
